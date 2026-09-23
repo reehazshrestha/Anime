@@ -318,8 +318,13 @@ img {
 .search-clear {
   color: var(--text-3);
   display: inline-flex;
-  padding: 4px;
-  border-radius: 6px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  flex-shrink: 0;
 }
 
 .search-clear:hover {
@@ -2155,5 +2160,71 @@ select.btn:focus,
     width: auto;
     max-width: 100%;
     margin: 0 auto;
+  }
+}
+
+/* ============================================================
+   TopBar / search — small-screen optimization
+   ============================================================ */
+
+@media (max-width: 640px) {
+  /* hide the keyboard-only shortcut hint */
+  .kbd-desktop {
+    display: none;
+  }
+
+  /* compact topbar: tighter padding, safe-area aware (from the base rule) */
+  .topbar {
+    gap: 8px;
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  /* icon buttons (menu, theme): 40px, still comfortably tappable */
+  .topbar .icon-btn {
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    border-radius: 10px;
+  }
+
+  .topbar .icon-btn svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  /* search input: slightly denser vertical padding (44px total kept via min-height) */
+  .searchbox form {
+    padding: 0 8px 0 10px;
+    gap: 8px;
+    border-radius: 10px;
+  }
+
+  .searchbox input {
+    min-height: 44px;
+    padding: 10px 0;
+  }
+
+  /* suggestions dropdown: break out of the searchbox so results get the
+     full row width on a 360px screen. topbar = safe-area + 12px padding
+     + 44px input, so the dropdown starts just below it. */
+  .suggest {
+    position: fixed;
+    top: calc(68px + env(safe-area-inset-top));
+    left: 8px;
+    right: 8px;
+    width: auto;
+    max-height: calc(100dvh - 160px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    box-shadow: var(--shadow-2);
+  }
+}
+
+/* very small phones: dropdown hugs the edges */
+@media (max-width: 380px) and (max-width: 640px) {
+  .suggest {
+    left: 6px;
+    right: 6px;
   }
 }

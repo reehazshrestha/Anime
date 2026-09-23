@@ -151,6 +151,10 @@ export function TopBar({ onMenu }: { onMenu: () => void }) {
             onKeyDown={(e) => e.key === "Escape" && setOpen(false)}
             aria-label="Search anime"
             autoComplete="off"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            enterKeyHint="search"
           />
           {q ? (
             <button
@@ -163,10 +167,10 @@ export function TopBar({ onMenu }: { onMenu: () => void }) {
               }}
               aria-label="Clear search"
             >
-              <X size={15} />
+              <X size={16} />
             </button>
           ) : (
-            <span className="kbd">{isMac ? "⌘K" : "Ctrl K"}</span>
+            <span className="kbd kbd-desktop">{isMac ? "⌘K" : "Ctrl K"}</span>
           )}
         </form>
         {open && (

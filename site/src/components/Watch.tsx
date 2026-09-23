@@ -228,7 +228,20 @@ export function Watch({ animeId, epParam }: { animeId: string; epParam: string |
       <div className="watch-layout">
         <div>
           <div className="player-box">
-            <video ref={videoRef} controls autoPlay playsInline>
+            <video
+              ref={videoRef}
+              className="player-video"
+              controls
+              autoPlay
+              playsInline
+              crossOrigin="anonymous"
+              webkit-playsinline="true"
+              onError={() =>
+                setSourcesError(
+                  "Video failed to load — the stream may have expired. Try reloading it.",
+                )
+              }
+            >
               {(sources?.subtitles ?? []).map((s) => (
                 <track
                   key={s.src}

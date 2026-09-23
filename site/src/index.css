@@ -69,13 +69,15 @@ html {
 
 body {
   margin: 0;
-  min-height: 100vh;
+  min-height: 100svh;
   background: var(--bg);
   color: var(--text);
   font-family: var(--font);
   font-size: 14.5px;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
 }
 
 a {
@@ -130,7 +132,7 @@ img {
 
 .shell {
   display: flex;
-  min-height: 100vh;
+  min-height: 100svh;
 }
 
 .sidebar {
@@ -140,7 +142,7 @@ img {
   background: var(--bg-2);
   position: sticky;
   top: 0;
-  height: 100vh;
+  height: 100svh;
   display: flex;
   flex-direction: column;
   padding: 20px 14px;
@@ -244,6 +246,7 @@ img {
   align-items: center;
   gap: 14px;
   padding: 12px clamp(16px, 3vw, 36px);
+  padding-top: max(12px, env(safe-area-inset-top));
   background: var(--header-bg);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
@@ -258,6 +261,19 @@ img {
   position: relative;
   width: min(430px, 100%);
   margin-left: auto;
+}
+
+@media (max-width: 640px) {
+  /* full-width, 44px-tall search on phones */
+  .searchbox {
+    flex: 1;
+    width: auto;
+  }
+
+  .searchbox input {
+    min-height: 44px;
+    font-size: 16px; /* prevents iOS zoom-on-focus */
+  }
 }
 
 .searchbox form {
@@ -1426,6 +1442,19 @@ img {
   box-shadow: var(--shadow-1);
 }
 
+/* fullscreen: use the whole screen, respect notches */
+video::-webkit-media-text-track-container {
+  max-width: none;
+}
+video:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+}
+video:-webkit-full-screen {
+  border-radius: 0;
+}
+
 .player-controls {
   display: flex;
   flex-wrap: wrap;
@@ -1863,4 +1892,268 @@ select.btn:focus,
 }
 .backend-row .info p {
   max-width: 60ch;
+}
+
+/* ============================================================
+   Mobile & tablet overhaul
+   - 768px: tablet refinements
+   - 640px: large phones
+   - 480px: phones (2-col cards, stacked heroes, compact player)
+   - 900px: watch page stacks + scrollable episode sidebar (existing rule lives above)
+   ============================================================ */
+
+/* ---------- tablet (768px) ---------- */
+@media (max-width: 768px) {
+  .page-head h1 {
+    font-size: 30px;
+  }
+
+  .hero {
+    min-height: clamp(300px, 52vw, 440px);
+  }
+
+  .hero-poster {
+    width: 116px;
+  }
+
+  /* filter bars become swipeable rows instead of wrapping clutter */
+  .filter-bar {
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+    scroll-snap-type: x proximity;
+  }
+
+  .filter-bar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .filter-bar .chip,
+  .filter-bar .season-select {
+    scroll-snap-align: start;
+    flex: 0 0 auto;
+  }
+
+  /* rails: slightly larger cards on tablets */
+  .rail-track > * {
+    flex-basis: 150px;
+  }
+
+  /* episode rows: comfortable touch targets */
+  .episode-row {
+    padding: 13px 15px;
+    font-size: 14px;
+  }
+}
+
+/* ---------- large phones (640px) ---------- */
+@media (max-width: 640px) {
+  .page-head h1 {
+    font-size: 26px;
+  }
+
+  .page-head .sub {
+    font-size: 13.5px;
+  }
+
+  .hero-actions {
+    flex-wrap: wrap;
+  }
+
+  .hero-actions .btn {
+    padding: 11px 16px;
+    font-size: 13.5px;
+  }
+
+  .hero-kicker {
+    font-size: 11px;
+  }
+
+  .hero-title {
+    font-size: 24px;
+  }
+
+  /* episode chunk tabs: horizontal scroll instead of wrap */
+  .episode-tabs {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .episode-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* player controls: bigger touch targets, tighter gaps */
+  .player-controls {
+    gap: 8px;
+  }
+
+  .player-controls .btn {
+    padding: 11px 14px;
+    font-size: 13.5px;
+    flex: 0 0 auto;
+  }
+
+  .player-controls .season-select {
+    min-height: 42px;
+  }
+
+  /* suggestion dropdown: taller rows, full-bleed within topbar padding */
+  .suggest-item {
+    padding: 11px 12px;
+  }
+}
+
+/* ---------- phones (480px) ---------- */
+@media (max-width: 480px) {
+  body {
+    font-size: 14px;
+  }
+
+  .main {
+    padding-bottom: calc(70px + env(safe-area-inset-bottom));
+  }
+
+  .page-head h1 {
+    font-size: 23px;
+  }
+
+  /* card grid: exactly 2 columns with tighter gutters */
+  .grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 14px 10px;
+  }
+
+  .rail-track > * {
+    flex-basis: 128px;
+  }
+
+  .card-title {
+    font-size: 13px;
+  }
+
+  .card-sub {
+    font-size: 11.5px;
+  }
+
+  /* hero: full-bleed, poster on top, CTAs full-width */
+  .hero {
+    border-radius: var(--r-lg);
+    min-height: 0;
+  }
+
+  .hero-poster {
+    width: 104px;
+  }
+
+  .hero-title {
+    font-size: 21px;
+  }
+
+  .hero-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .hero-actions .btn-hero {
+    width: 100%;
+  }
+
+  /* watch page: player first, edge-to-edge-ish, controls wrap cleanly */
+  .watch-layout {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .watch-layout .watch-main {
+    order: -1;
+  }
+
+  .player-box video {
+    aspect-ratio: 16 / 9;
+    border-radius: var(--r-md);
+  }
+
+  .player-controls .btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .player-controls .season-select {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  /* episode sidebar becomes a list below the player */
+  .watch-side {
+    max-height: none;
+  }
+
+  .episode-list {
+    max-height: none;
+  }
+
+  /* chips & selects: thumb-friendly */
+  .chip {
+    padding: 9px 14px;
+    font-size: 13px;
+  }
+
+  .season-select {
+    min-height: 42px;
+  }
+
+  /* detail page: stacked poster, smaller meta */
+  .detail-poster {
+    width: 120px;
+  }
+
+  .detail-actions {
+    flex-wrap: wrap;
+  }
+
+  /* footer: stack and center */
+  footer {
+    text-align: center;
+  }
+
+  /* drawer: 86vw max, safe-area padding */
+  .drawer {
+    width: min(300px, 86vw);
+    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+  }
+
+  .bottom-nav {
+    padding-bottom: calc(6px + env(safe-area-inset-bottom));
+  }
+}
+
+/* ---------- very small (360px) ---------- */
+@media (max-width: 360px) {
+  .hero-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .grid {
+    gap: 12px 8px;
+  }
+}
+
+/* ---------- orientation safety for the player ---------- */
+@media (max-width: 900px) and (orientation: landscape) {
+  .main {
+    padding-bottom: 12px; /* bottom nav crowds landscape video */
+  }
+
+  .bottom-nav {
+    display: none;
+  }
+
+  .player-box video {
+    max-height: 92svh;
+    width: auto;
+    max-width: 100%;
+    margin: 0 auto;
+  }
 }

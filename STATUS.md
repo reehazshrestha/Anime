@@ -45,7 +45,7 @@ One command runs everything: `cd anime-api && uv run anime-api` → **http://loc
 | Anime details | ✅ | Cinematic backdrop, poster, genres/rating/status, Watch Now + Add to List, season chips, episode rows with watched ticks, chunked pagination tabs (handles 1000+ eps) |
 | Watch page | ✅ | hls.js player (kept intact through all redesigns), quality/sub-dub controls, chunked episode sidebar, next/prev |
 | Library / Continue / History / Settings | ✅ | Real posters (backend backfills old entries), empty states with icons + CTAs |
-| Responsive | ✅ | Verified at 1920/1440/1280/1024/768/390 px |
+| Responsive | ✅ | Dedicated mobile/tablet pass: svh units (no iOS URL-bar jump), `viewport-fit=cover` + safe-area insets (notches), 44px touch targets, 16px search font (no iOS zoom), swipeable filter bars, 2-col card grid on phones, player-first watch layout, landscape video mode, 16px→23px type scale across 360/480/640/768/900 breakpoints |
 
 ### Test & verification matrix
 

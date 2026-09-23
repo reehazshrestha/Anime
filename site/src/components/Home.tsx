@@ -144,7 +144,7 @@ export function Home() {
 
       <footer className="footer">
         <span>
-          AniStream — data from <a href="https://hianime.at" target="_blank" rel="noreferrer">hianime.at</a>
+          AniStream
         </span>
         <span>For personal use · respect the providers</span>
       </footer>

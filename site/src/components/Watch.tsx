@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, saveBeacon, type AnimeDetailsResponse } from "../api.js";
+import { api, type AnimeDetailsResponse } from "../api.js";
+import { getProgress, saveProgress as storeSaveProgress } from "../userStore.js";
 import type { AudioMode, EpisodeSources } from "../../shared/types.js";
 import { navigate } from "../router.js";
 import { useEpisodeChunk, EpisodeTabs } from "./EpisodePager.js";
@@ -22,13 +23,14 @@ export function Watch({ animeId, epParam }: { animeId: string; epParam: string |
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const resumeAtRef = useRef<number>(0);
 
-  // load details (episode list, title, saved progress)
+  // load details (episode list, title); saved progress comes from the
+  // browser store and is layered on top of the API payload
   useEffect(() => {
     let alive = true;
     setDetails(null);
     api
       .getAnime(animeId)
-      .then((d) => alive && setDetails(d))
+      .then((d) => alive && setDetails({ ...d, progress: getProgress(animeId) }))
       .catch(() => undefined);
     return () => {
       alive = false;
@@ -152,7 +154,7 @@ export function Watch({ animeId, epParam }: { animeId: string; epParam: string |
     const save = (final = false) => {
       const v = videoRef.current;
       if (!v || !v.duration || Number.isNaN(v.duration)) return;
-      void api.saveProgress({
+      storeSaveProgress({
         animeId,
         animeTitle: title,
         episodeNumber: ep ?? "1",
@@ -166,7 +168,7 @@ export function Watch({ animeId, epParam }: { animeId: string; epParam: string |
     const onHide = () => {
       const v = videoRef.current;
       if (!v || !v.duration) return;
-      saveBeacon({
+      storeSaveProgress({
         animeId,
         animeTitle: title,
         episodeNumber: ep ?? "1",

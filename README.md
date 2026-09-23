@@ -35,7 +35,7 @@ cd api && uv run anime-api   # → http://localhost:8000
 - **Real quality control** — all HLS variants (360p–1080p) are enumerated and sorted. Pin a quality (`?quality=720`) or serve the best automatically; players can switch adaptively via the proxied master playlist.
 - **HLS proxy** — the upstream CDN requires an embed `Referer` and sends no CORS headers, so every playlist is rewritten in-flight and segments are piped with Range (seek) support.
 - **Sub & dub** — per-episode audio mode with graceful fallback messaging.
-- **Progress & favorites** — resume where you left off, watched ticks, "continue watching" hero on the home page.
+- **Progress & favorites** — resume where you left off, watched ticks, "continue watching" hero. Stored **privately in the visitor's browser** (localStorage) — no accounts, nothing leaves the device.
 - **Search that feels instant** — debounced live suggestions with posters while you type.
 - **Built to be tested** — 35 offline API tests, 12 site tests, strict TypeScript.
 

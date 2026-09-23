@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Check, Play, Plus, Share2 } from "lucide-react";
 import { api, type AnimeDetailsResponse } from "../api.js";
+import { getProgress, isFavorite, addFavorite, removeFavorite } from "../userStore.js";
 import { navigate } from "../router.js";
 import { useEpisodeChunk, EpisodeTabs } from "./EpisodePager.js";
 
@@ -22,7 +23,7 @@ export function AnimeDetails({ id }: { id: string }) {
     setSeasonEpisodes(null);
     api
       .getAnime(id)
-      .then((d) => alive && setData(d))
+      .then((d) => alive && setData({ ...d, progress: getProgress(id) }))
       .catch((e: Error) => alive && setError(e.message));
     return () => {
       alive = false;
@@ -88,12 +89,12 @@ export function AnimeDetails({ id }: { id: string }) {
     if (!data || favPending) return;
     setFavPending(true);
     try {
-      if (data.isFavorite) {
-        await api.removeFavorite(data.id);
+      if (isFavorite(data.id)) {
+        removeFavorite(data.id);
       } else {
-        await api.addFavorite(data.id, data.title);
+        addFavorite(data.id, data.title, data.poster ?? undefined);
       }
-      setData({ ...data, isFavorite: !data.isFavorite });
+      setData({ ...data, isFavorite: !isFavorite(data.id) });
     } finally {
       setFavPending(false);
     }

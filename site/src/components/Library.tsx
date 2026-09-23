@@ -1,6 +1,12 @@
 import { Bookmark, Compass, History as HistoryIcon, PlayCircle, Settings as SettingsIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, getApiBase, setApiBase } from "../api.js";
+import {
+  listProgress,
+  listFavorites,
+  clearAll,
+  storageEstimate,
+} from "../userStore.js";
 import { navigate } from "../router.js";
 import { useTheme } from "../theme.js";
 import { AnimeCard } from "./AnimeCard.js";
@@ -114,34 +120,17 @@ const GENRES = [
 
 export function Library() {
   const [items, setItems] = useState<FavoriteEntry[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    let alive = true;
-    api
-      .listFavorites()
-      .then((r) => alive && setItems(r.items))
-      .catch((e: Error) => alive && setError(e.message));
-    return () => {
-      alive = false;
-    };
+    setItems(listFavorites());
   }, []);
-
   return (
     <div className="page">
       <div className="page-head">
         <h1>My List</h1>
         <p className="sub">Anime you bookmarked to watch later.</p>
       </div>
-      {error && (
-        <div className="error-box">
-          <strong>Something went wrong.</strong>
-          <div className="muted" style={{ marginTop: 6 }}>
-            {error}
-          </div>
-        </div>
-      )}
-      {items === null && !error && <CardSkeletons count={6} />}
+      {items === null && <CardSkeletons count={6} />}
       {items !== null && items.length === 0 && (
         <EmptyState
           icon={Bookmark}
@@ -170,17 +159,9 @@ export function Library() {
 
 export function Continue() {
   const [items, setItems] = useState<ProgressEntry[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    let alive = true;
-    api
-      .listProgress()
-      .then((r) => alive && setItems(r.items.filter(inProgress)))
-      .catch((e: Error) => alive && setError(e.message));
-    return () => {
-      alive = false;
-    };
+    setItems(listProgress().filter(inProgress));
   }, []);
 
   return (
@@ -189,15 +170,7 @@ export function Continue() {
         <h1>Continue Watching</h1>
         <p className="sub">Pick up exactly where you left off.</p>
       </div>
-      {error && (
-        <div className="error-box">
-          <strong>Something went wrong.</strong>
-          <div className="muted" style={{ marginTop: 6 }}>
-            {error}
-          </div>
-        </div>
-      )}
-      {items === null && !error && <CardSkeletons count={6} />}
+      {items === null && <CardSkeletons count={6} />}
       {items !== null && items.length === 0 && (
         <EmptyState icon={PlayCircle} title="Nothing in progress">
           Start any episode and it will appear here with your exact resume point.
@@ -231,17 +204,9 @@ function inProgress(p: ProgressEntry): boolean {
 
 export function History() {
   const [items, setItems] = useState<ProgressEntry[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    let alive = true;
-    api
-      .listProgress()
-      .then((r) => alive && setItems(r.items))
-      .catch((e: Error) => alive && setError(e.message));
-    return () => {
-      alive = false;
-    };
+    setItems(listProgress());
   }, []);
 
   return (
@@ -250,15 +215,7 @@ export function History() {
         <h1>History</h1>
         <p className="sub">Everything you have watched on this device.</p>
       </div>
-      {error && (
-        <div className="error-box">
-          <strong>Something went wrong.</strong>
-          <div className="muted" style={{ marginTop: 6 }}>
-            {error}
-          </div>
-        </div>
-      )}
-      {items === null && !error && <CardSkeletons count={6} />}
+      {items === null && <CardSkeletons count={6} />}
       {items !== null && items.length === 0 && (
         <EmptyState icon={HistoryIcon} title="No history yet">
           Watch your first episode and it will be tracked here.
@@ -443,6 +400,8 @@ export function GenreBrowse({ genre }: { genre: string }) {
 
 export function Settings() {
   const { theme, toggle } = useTheme();
+  const [cleared, setCleared] = useState(false);
+  const kb = (storageEstimate() / 1024).toFixed(1);
   return (
     <div className="page">
       <div className="page-head">
@@ -470,6 +429,24 @@ export function Settings() {
             <p>The player always starts at the best available quality; pin a height via the player menu.</p>
           </div>
           <SettingsIcon size={18} style={{ color: "var(--text-3)" }} />
+        </div>
+        <div className="setting-row">
+          <div className="info">
+            <h3>Your data</h3>
+            <p>
+              Watch history, continue-watching and My List live in this browser
+              only ({kb} KB) — private, and never synced anywhere.
+            </p>
+          </div>
+          <button
+            className="btn"
+            onClick={() => {
+              clearAll();
+              setCleared(true);
+            }}
+          >
+            {cleared ? "Cleared ✓" : "Clear"}
+          </button>
         </div>
       </div>
     </div>

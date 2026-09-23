@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Info, Play, Plus, Check } from "lucide-react";
 import { api } from "../api.js";
+import { listProgress, listFavorites, addFavorite, removeFavorite } from "../userStore.js";
 import { AnimeCard } from "./AnimeCard.js";
 import { Rail } from "./Rail.js";
 import { ContinueWatchingHero } from "./ContinueWatchingHero.js";
@@ -34,12 +35,13 @@ export function Home() {
 
   useEffect(() => {
     let alive = true;
-    Promise.all([api.home(), api.listProgress(), api.listFavorites()])
-      .then(([h, p, f]) => {
+    api
+      .home()
+      .then((h) => {
         if (!alive) return;
         setSections(h.sections);
-        setProgress(p.items);
-        setFavorites(f.items);
+        setProgress(listProgress());
+        setFavorites(listFavorites());
       })
       .catch((e: Error) => alive && setError(e.message))
       .finally(() => alive && setLoading(false));
@@ -185,10 +187,10 @@ function FeaturedHero({ section, inList }: { section: HomeSection; inList: boole
     setPending(true);
     try {
       if (added) {
-        await api.removeFavorite(item.id);
+        removeFavorite(item.id);
         setAdded(false);
       } else {
-        await api.addFavorite(item.id, item.title);
+        addFavorite(item.id, item.title, poster ?? undefined);
         setAdded(true);
       }
     } finally {

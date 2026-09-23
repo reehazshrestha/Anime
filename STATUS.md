@@ -27,7 +27,7 @@ One command runs everything: `cd anime-api && uv run anime-api` → **http://loc
 | Sub + dub modes | ✅ Working | `?mode=dub` resolves a dub server when the anime has one |
 | **HLS proxy** | ✅ Working | Playlists rewritten in-flight, segments/subtitles piped with Range (seek) support, Referer propagation |
 | Image proxy | ✅ Working | `/img/<url>` with CDN host allowlist |
-| User data: progress, favorites, continue-watching | ✅ Working | Persisted to `anime-api/data/store.json`; **posters captured + auto-backfilled** so library banners always render |
+| User data: progress, favorites, continue-watching | ✅ Working | **Stored in the visitor's browser (localStorage, `anistream.userData`)** — private, per device, zero backend. The API keeps its `/api/progress` + `/api/favorites` routes as an optional server-side store, but the site no longer depends on them |
 | Feature detection | ✅ Working | `/health` reports `"features": ["genres","quality","posters","suggest"]` so the frontend can detect a stale server |
 | Resilience | ✅ Working | Retries transient 5xx/connection errors; genre browse retries once, then 502; all errors speak `{"error": ...}`; **all 12 Discover genre names verified 200** (incl. `Sci-Fi`, `Slice of Life`) and pages 1–50 |
 
@@ -241,6 +241,7 @@ in VLC (Media → Open Network Stream), or just press play on the watch page.
 | Symptom | Cause | Fix |
 |---|---|---|
 | Discover/genre shows `endpoint not found … site is not talking to anime-api` | Request hit the **legacy Node backend (:8787)** or a stale process — it 404s `/api/genre` and `/img` with an HTML page | Start the right backend: `cd anime-api && uv run anime-api`; stop strays (`ss -tlnp \| grep -E '8000\|8787'`); never point `BACKEND_ORIGIN` at :8787 || Any page says *"the API server looks out of date"* or a raw `request failed (404)` with JSON `{detail}` | A **stale anime-api process** from before a feature was added is still holding :8000 | `kill` it and restart: `cd anime-api && uv run anime-api` (check `/health` → `features` to confirm) |
+| History/favorites missing on a different device | User data is **browser-local by design** (private, no accounts) | Use the same browser/profile, or wire the optional server-side `/api/progress`+`/api/favorites` store back in |
 | `503 provider is blocking automated access` | Cloudflare challenge on your IP | Wait, or run from a network where hianime.at works in your browser |
 | Banners missing in My List / Continue / History | Store entry predates poster capture | Auto-backfills on first GET with the new server — restart the API and refresh |
 | Port 8000 already in use | Old process | `kill $(ss -tlnp \| grep :8000 \| grep -oP 'pid=\K[0-9]+' \| sort -u)` |

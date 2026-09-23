@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { navigate } from "../router.js";
 import { api } from "../api.js";
+import { deleteProgress } from "../userStore.js";
 import type { ProgressEntry } from "../../shared/types.js";
 
 /**
@@ -43,10 +44,8 @@ export function ContinueWatchingHero({ entry }: { entry: ProgressEntry }) {
 
   const remove = () => {
     setRemoving(true);
-    api
-      .deleteProgress(entry.animeId)
-      .then(() => window.location.reload())
-      .catch(() => setRemoving(false));
+    deleteProgress(entry.animeId);
+    window.location.reload();
   };
 
   return (

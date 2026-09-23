@@ -173,17 +173,3 @@ export const api = {
   },
 };
 
-/** fire-and-forget progress save on page exit. fetch+keepalive works
- * cross-origin (CORS) — plain sendBeacon is flaky with preflighted JSON. */
-export function saveBeacon(payload: unknown): void {
-  try {
-    void fetch(`${API_BASE}/api/progress`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      keepalive: true,
-    }).catch(() => undefined);
-  } catch {
-    /* page dying — best effort */
-  }
-}

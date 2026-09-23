@@ -2180,11 +2180,25 @@ select.btn:focus,
     padding-right: 12px;
   }
 
-  /* icon buttons (menu, theme): 40px, still comfortably tappable */
+  /* the searchbox must be the only flexible child: kill the desktop
+     margin-left:auto (auto margins absorb free space BEFORE flex-grow,
+     which prevented shrinking and pushed the theme toggle off-screen) */
+  .searchbox {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+    margin-left: 0;
+  }
+
+  .searchbox form {
+    min-width: 0;
+  }
+
+  /* icon buttons (menu, theme): 40px, fixed — never squeezed, never pushed out */
   .topbar .icon-btn {
     width: 40px;
     height: 40px;
-    flex-shrink: 0;
+    flex: 0 0 40px;
     border-radius: 10px;
   }
 

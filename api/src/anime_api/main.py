@@ -377,7 +377,8 @@ def _dist_dir() -> str | None:
     )
     candidates = [
         os.environ.get("ANIME_API_DIST_DIR"),
-        os.path.join(workspace, "anime-site", "dist"),
+        os.path.join(workspace, "anime-site", "dist"),  # legacy layout
+        os.path.join(workspace, "site", "dist"),  # current layout
     ]
     for c in candidates:
         if c and os.path.isdir(c):

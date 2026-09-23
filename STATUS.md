@@ -294,8 +294,18 @@ progress/favorites live in an ephemeral temp dir per warm instance).
 
 The site can talk to the deployed API instead of a local one:
 
-- **Runtime switch (easiest):** open the site → **Settings → Streaming backend** → pick *Vercel cloud* (or paste any API base). A connection test shows the remote `/health` features. Choice persists per browser.
-- **Build-time:** `VITE_API_BASE=https://anime-api-rho-three.vercel.app npm run build` (or dev).
+- **Deployed site (all devices):** `site/` deploys to Vercel as a static app
+  (`vercel --prod` in `site/`). Production builds bake the API URL in via
+  `.env.production`, so the public site URL works on phones/laptops out of
+  the box.
+- **Runtime switch:** **Settings → Streaming backend** → *Vercel cloud* (or
+  paste any API base). A connection test shows the remote `/health`
+  features. Choice persists per browser and **overrides** the baked URL.
+- **Build-time:** `VITE_API_BASE=<url> npm run build`.
+
+On-device local serving still works exactly as before: with no runtime
+override and no `VITE_API_BASE` (e.g. `npm run dev`, or the single-process
+`uv run anime-api`), the site talks same-origin to :8000.
 
 The API client prefixes every request with the base and rewrites returned
 `/img/…` and `/stream/…` URLs to the same host, so posters and video flow

@@ -10,10 +10,13 @@ import type {
 } from "../shared/types.js";
 
 // ---------------------------------------------------------------------
-// API base: same-origin by default; override two ways —
-//   build/dev time:  VITE_API_BASE=https://anime-api-rho-three.vercel.app
-//   run time:        Settings page → "Streaming backend" (localStorage,
-//                    applied instantly via reload)
+// API base resolution order —
+//   1. runtime override: Settings page → "Streaming backend" (localStorage,
+//      applied instantly via reload)
+//   2. build-time:       VITE_API_BASE (site/.env.production bakes the
+//      deployed Vercel API into production builds so the site works on any
+//      device out of the box)
+//   3. same-origin (local single-process serving)
 // ---------------------------------------------------------------------
 const API_BASE_KEY = "anistream.apiBase";
 
@@ -22,13 +25,14 @@ function trimSlash(url: string): string {
 }
 
 function initialApiBase(): string {
-  const env = (import.meta.env.VITE_API_BASE as string | undefined)?.trim();
-  if (env) return trimSlash(env);
   try {
-    return trimSlash(localStorage.getItem(API_BASE_KEY) ?? "");
+    const stored = localStorage.getItem(API_BASE_KEY);
+    if (stored !== null) return trimSlash(stored); // explicit user choice wins
   } catch {
-    return ""; // storage unavailable → same origin
+    /* storage unavailable */
   }
+  const env = (import.meta.env.VITE_API_BASE as string | undefined)?.trim();
+  return env ? trimSlash(env) : "";
 }
 
 export const API_BASE = initialApiBase();
@@ -169,8 +173,17 @@ export const api = {
   },
 };
 
-/** fire-and-forget progress save on page exit (sendBeacon needs the absolute URL too). */
+/** fire-and-forget progress save on page exit. fetch+keepalive works
+ * cross-origin (CORS) — plain sendBeacon is flaky with preflighted JSON. */
 export function saveBeacon(payload: unknown): void {
-  const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
-  navigator.sendBeacon?.(`${API_BASE}/api/progress`, blob);
+  try {
+    void fetch(`${API_BASE}/api/progress`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      keepalive: true,
+    }).catch(() => undefined);
+  } catch {
+    /* page dying — best effort */
+  }
 }

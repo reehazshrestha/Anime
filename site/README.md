@@ -52,6 +52,23 @@ npm run build        # tsc --noEmit && vite build → dist/
 cd ../anime-api && uv run anime-api    # serves dist/ + API on :8000
 ```
 
+### Deploy the site itself (works on every device)
+
+`site/` is also a Vercel project (static + SPA fallback). Production builds
+bake the deployed API URL in via `.env.production` (`VITE_API_BASE`), so
+once deployed, the site works on phones/laptops out of the box — no local
+server needed:
+
+```bash
+npm i -g vercel
+cd site
+vercel --prod        # → https://<site-project>.vercel.app
+```
+
+Visitors can still point their browser at a different backend via
+**Settings → Streaming backend** (localStorage), which overrides the baked
+URL.
+
 ## Architecture
 
 ```
@@ -89,7 +106,7 @@ hls.js player logic is kept independent of styling.
 | Var | Default | Purpose |
 |---|---|---|
 | `BACKEND_ORIGIN` | `http://127.0.0.1:8000` | dev-proxy target |
-| `VITE_API_BASE` | _(same origin)_ | bake a different API into the build (e.g. the deployed Vercel API). Runtime alternative: **Settings → Streaming backend** (stored in localStorage, applies on reload) |
+| `VITE_API_BASE` | `https://anime-api-rho-three.vercel.app` in production builds (`.env.production`), same origin otherwise | API the site talks to. Runtime override: **Settings → Streaming backend** (localStorage, wins over the baked value) |
 
 ## Tests
 

@@ -89,6 +89,7 @@ hls.js player logic is kept independent of styling.
 | Var | Default | Purpose |
 |---|---|---|
 | `BACKEND_ORIGIN` | `http://127.0.0.1:8000` | dev-proxy target |
+| `VITE_API_BASE` | _(same origin)_ | bake a different API into the build (e.g. the deployed Vercel API). Runtime alternative: **Settings → Streaming backend** (stored in localStorage, applies on reload) |
 
 ## Tests
 

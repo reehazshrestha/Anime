@@ -290,6 +290,19 @@ deploy.
 Optional env var: `ANISTREAM_DATA_DIR` is ignored on Vercel (read-only FS —
 progress/favorites live in an ephemeral temp dir per warm instance).
 
+### Use the cloud API from the site
+
+The site can talk to the deployed API instead of a local one:
+
+- **Runtime switch (easiest):** open the site → **Settings → Streaming backend** → pick *Vercel cloud* (or paste any API base). A connection test shows the remote `/health` features. Choice persists per browser.
+- **Build-time:** `VITE_API_BASE=https://anime-api-rho-three.vercel.app npm run build` (or dev).
+
+The API client prefixes every request with the base and rewrites returned
+`/img/…` and `/stream/…` URLs to the same host, so posters and video flow
+through the selected backend (CORS is open server-side; the serverless
+function has `maxDuration: 60`). Verify with
+`curl https://anime-api-rho-three.vercel.app/health`.
+
 ### Serverless caveats (know before sharing the link)
 
 | Caveat | Impact |

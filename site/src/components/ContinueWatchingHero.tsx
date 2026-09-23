@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { navigate } from "../router.js";
+import { api } from "../api.js";
 import type { ProgressEntry } from "../../shared/types.js";
 
 /**
@@ -16,9 +17,9 @@ export function ContinueWatchingHero({ entry }: { entry: ProgressEntry }) {
   useEffect(() => {
     if (entry.poster) return;
     let alive = true;
-    fetch(`/api/anime/${encodeURIComponent(entry.animeId)}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => alive && setPoster(d?.poster ?? null))
+    api
+      .getAnime(entry.animeId)
+      .then((d) => alive && setPoster(d.poster ?? null))
       .catch(() => undefined);
     return () => {
       alive = false;
@@ -42,7 +43,8 @@ export function ContinueWatchingHero({ entry }: { entry: ProgressEntry }) {
 
   const remove = () => {
     setRemoving(true);
-    fetch(`/api/progress/${encodeURIComponent(entry.animeId)}`, { method: "DELETE" })
+    api
+      .deleteProgress(entry.animeId)
       .then(() => window.location.reload())
       .catch(() => setRemoving(false));
   };

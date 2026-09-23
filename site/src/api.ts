@@ -9,8 +9,63 @@ import type {
   ProgressEntry,
 } from "../shared/types.js";
 
+// ---------------------------------------------------------------------
+// API base: same-origin by default; override two ways —
+//   build/dev time:  VITE_API_BASE=https://anime-api-rho-three.vercel.app
+//   run time:        Settings page → "Streaming backend" (localStorage,
+//                    applied instantly via reload)
+// ---------------------------------------------------------------------
+const API_BASE_KEY = "anistream.apiBase";
+
+function trimSlash(url: string): string {
+  return url.replace(/\/+$/, "");
+}
+
+function initialApiBase(): string {
+  const env = (import.meta.env.VITE_API_BASE as string | undefined)?.trim();
+  if (env) return trimSlash(env);
+  try {
+    return trimSlash(localStorage.getItem(API_BASE_KEY) ?? "");
+  } catch {
+    return ""; // storage unavailable → same origin
+  }
+}
+
+export const API_BASE = initialApiBase();
+
+export function getApiBase(): string {
+  return API_BASE;
+}
+
+/** Set the backend (empty string = same origin) and reload to apply. */
+export function setApiBase(base: string): void {
+  const b = trimSlash(base.trim());
+  try {
+    if (b) localStorage.setItem(API_BASE_KEY, b);
+    else localStorage.removeItem(API_BASE_KEY);
+  } catch {
+    /* ignore */
+  }
+  window.location.reload();
+}
+
+/** Points "/img/…" and "/stream/…" URLs returned by the API at the right host. */
+function absolutize(value: unknown): unknown {
+  if (typeof value === "string") {
+    if (value.startsWith("/img/") || value.startsWith("/stream/")) return API_BASE + value;
+    return value;
+  }
+  if (Array.isArray(value)) return value.map(absolutize);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, absolutize(v)]),
+    );
+  }
+  return value;
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  const res = await fetch(API_BASE + url, init);
   let body: unknown = null;
   try {
     body = await res.json();
@@ -37,7 +92,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     }
     throw new Error(err?.error ?? `request failed (${res.status})`);
   }
-  return body as T;
+  return absolutize(body) as T;
 }
 
 export interface AnimeDetailsResponse extends AnimeDetails {
@@ -113,3 +168,9 @@ export const api = {
     return request(`/api/favorites/${encodeURIComponent(animeId)}`, { method: "DELETE" });
   },
 };
+
+/** fire-and-forget progress save on page exit (sendBeacon needs the absolute URL too). */
+export function saveBeacon(payload: unknown): void {
+  const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+  navigator.sendBeacon?.(`${API_BASE}/api/progress`, blob);
+}

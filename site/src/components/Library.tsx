@@ -1,11 +1,99 @@
 import { Bookmark, Compass, History as HistoryIcon, PlayCircle, Settings as SettingsIcon } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api } from "../api.js";
+import { api, getApiBase, setApiBase } from "../api.js";
 import { navigate } from "../router.js";
 import { useTheme } from "../theme.js";
 import { AnimeCard } from "./AnimeCard.js";
 import { CardSkeletons, EmptyState } from "./ui/primitives.js";
 import type { FavoriteEntry, ProgressEntry } from "../../shared/types.js";
+
+const CLOUD_API = "https://anime-api-rho-three.vercel.app";
+
+/**
+ * Backend picker: same-origin (local `uv run anime-api`) or the deployed
+ * Vercel API. Choice persists in localStorage and applies on reload.
+ */
+function BackendSetting() {
+  const current = getApiBase();
+  const [custom, setCustom] = useState("");
+  const [probe, setProbe] = useState<{ status: "idle" | "checking" | "ok" | "fail"; msg: string }>({
+    status: "idle",
+    msg: "",
+  });
+
+  const checkHealth = (base: string) => {
+    setProbe({ status: "checking", msg: "Checking…" });
+    const url = (base ? base : window.location.origin) + "/health";
+    fetch(url)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((d: { features?: string[] }) =>
+        setProbe({
+          status: "ok",
+          msg: `Connected · features: ${(d.features ?? []).join(", ") || "none"}`,
+        }),
+      )
+      .catch((e: Error) => setProbe({ status: "fail", msg: `Unreachable (${e.message})` }));
+  };
+
+  const pick = (base: string) => {
+    if (base === current) return;
+    setApiBase(base);
+  };
+
+  return (
+    <div className="setting-row backend-row">
+      <div className="info">
+        <h3>Streaming backend</h3>
+        <p>
+          Where the site gets anime data and video. “This site” uses the API
+          serving this page (localhost:8000 locally); “Vercel cloud” uses the
+          deployed API.
+        </p>
+        <div className="backend-options">
+          <button
+            className={`chip${current === "" ? " on" : ""}`}
+            onClick={() => pick("")}
+          >
+            This site
+          </button>
+          <button
+            className={`chip${current === CLOUD_API ? " on" : ""}`}
+            onClick={() => pick(CLOUD_API)}
+          >
+            Vercel cloud
+          </button>
+        </div>
+        <div className="backend-custom">
+          <input
+            type="url"
+            placeholder="Custom API base URL…"
+            value={custom}
+            onChange={(e) => setCustom(e.target.value)}
+            aria-label="Custom API base URL"
+          />
+          <button className="btn" onClick={() => checkHealth(custom)} disabled={!custom.trim()}>
+            Test
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={() => pick(custom.trim())}
+            disabled={!custom.trim() || custom.trim() === current}
+          >
+            Use
+          </button>
+        </div>
+        <div className="backend-status">
+          <button className="btn" onClick={() => checkHealth(current)} disabled={probe.status === "checking"}>
+            Check connection
+          </button>
+          {probe.msg && (
+            <span className={probe.status === "fail" ? "backend-err" : "backend-ok"}>{probe.msg}</span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const GENRES = [
   "Action",
@@ -375,6 +463,7 @@ export function Settings() {
             aria-label="Toggle light theme"
           />
         </div>
+        <BackendSetting />
         <div className="setting-row">
           <div className="info">
             <h3>Default quality</h3>

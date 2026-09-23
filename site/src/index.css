@@ -1821,3 +1821,46 @@ select.btn:focus,
     scroll-behavior: auto !important;
   }
 }
+
+/* backend switcher (Settings) */
+.backend-options {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.backend-custom {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.backend-custom input {
+  flex: 1 1 220px;
+  min-width: 0;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-1);
+  padding: 8px 12px;
+  font-size: 13px;
+}
+.backend-custom input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.backend-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  font-size: 12.5px;
+}
+.backend-ok {
+  color: #4ade80;
+}
+.backend-err {
+  color: #f87171;
+}
+.backend-row .info p {
+  max-width: 60ch;
+}

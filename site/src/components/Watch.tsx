@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, type AnimeDetailsResponse } from "../api.js";
+import { api, saveBeacon, type AnimeDetailsResponse } from "../api.js";
 import type { AudioMode, EpisodeSources } from "../../shared/types.js";
 import { navigate } from "../router.js";
 import { useEpisodeChunk, EpisodeTabs } from "./EpisodePager.js";
@@ -166,7 +166,7 @@ export function Watch({ animeId, epParam }: { animeId: string; epParam: string |
     const onHide = () => {
       const v = videoRef.current;
       if (!v || !v.duration) return;
-      const payload = JSON.stringify({
+      saveBeacon({
         animeId,
         animeTitle: title,
         episodeNumber: ep ?? "1",
@@ -174,10 +174,6 @@ export function Watch({ animeId, epParam }: { animeId: string; epParam: string |
         durationSeconds: v.duration,
         mode,
       });
-      navigator.sendBeacon?.(
-        "/api/progress",
-        new Blob([payload], { type: "application/json" }),
-      );
     };
     window.addEventListener("pagehide", onHide);
     videoRef.current?.addEventListener("ended", onEnded);

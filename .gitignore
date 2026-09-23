@@ -1,0 +1,20 @@
+# --- python (anime/api) ---
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+
+# --- node (anime/site) ---
+node_modules/
+dist/
+.vite/
+
+# --- runtime user data (watch history / favorites) ---
+server/data/
+data/
+
+# --- tooling / secrets ---
+.vercel/
+.env
+*.log

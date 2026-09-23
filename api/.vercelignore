@@ -1,9 +1,8 @@
-.venv
-__pycache__
-*.pyc
-.pytest_cache
-tests
-data
-server/data
-README.md
-uv.lock
+# Minimal on purpose: the Vercel build needs README.md, uv.lock and
+# pyproject.toml to build the wheel (uv_build reads the readme; uv sync
+# runs with --locked). Only exclude heavy junk below.
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/node_modules

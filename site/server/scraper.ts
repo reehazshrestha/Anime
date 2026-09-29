@@ -4,6 +4,7 @@
  * hash) → embed page `window.__P` blob (base64 XOR "otaku-embed-v1") → master
  * m3u8 (+ subtitle tracks).
  */
+import { createDecipheriv } from "node:crypto";
 import { runtimeConfig } from "./config.js";
 import { proxyStreamUrl } from "./proxy-urls.js";
 import { proxyImageUrl } from "./proxy-urls.js";
@@ -461,6 +462,78 @@ export interface ResolvedStream {
   masterUrl: string;
 }
 
+// AES-CBC key/iv used by the MegaPlay player for its getSources "enc" payload
+const MEGAPLAY_KEY = Buffer.alloc(32);
+Buffer.from("i?LMTAx0Q6,:}50U", "utf8").copy(MEGAPLAY_KEY);
+const MEGAPLAY_IV = Buffer.from("W0;27ToaUpl_P%'c", "utf8");
+
+export function decryptMegaplayEnc(enc: string): unknown {
+  try {
+    const d = createDecipheriv("aes-256-cbc", MEGAPLAY_KEY, MEGAPLAY_IV);
+    const out = Buffer.concat([d.update(Buffer.from(enc, "base64url")), d.final()]);
+    return JSON.parse(out.toString("utf8"));
+  } catch {
+    throw new ProviderError("could not decode megaplay payload");
+  }
+}
+
+/** Resolve one embed URL to its master m3u8 (+ subtitles), across known embed styles. */
+async function resolveEmbed(
+  embed: string,
+): Promise<{ m3u8: string; origin: string; subtitles: SubtitleTrack[] }> {
+  if (!/^https?:\/\//i.test(embed)) throw new ProviderError("bad embed hash");
+  const origin = new URL(embed).origin + "/";
+  const embedPage = await fetchText(embed, origin);
+
+  // style 1: obfuscated config blob inlined in the page
+  const blobMatch = /window\.__P="([^"]*)"/.exec(embedPage);
+  if (blobMatch) {
+    const data = deobfuscateBlob(blobMatch[1]);
+    const m3u8 = findM3u8Src(data);
+    if (!m3u8) throw new ProviderError("no m3u8 in embed config");
+    return { m3u8, origin, subtitles: findSubtitles(data, origin) };
+  }
+
+  // style 2: MegaPlay — player page carries a file id, sources come from
+  // /stream/getSources as an AES-encrypted payload
+  const fileId = /id="megaplay-player"[^>]*?data-id="(\d+)"/.exec(embedPage)?.[1] ??
+    /data-id="(\d+)"/.exec(embedPage)?.[1];
+  if (!fileId) throw new ProviderError("embed config blob not found");
+  const res = await fetch(`${origin}stream/getSources?id=${fileId}`, {
+    headers: {
+      "User-Agent": UA,
+      Referer: embed,
+      "X-Requested-With": "XMLHttpRequest",
+      Accept: "application/json,*/*",
+    },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new ProviderError(`getSources ${res.status}`);
+  const j = (await res.json()) as {
+    enc?: string;
+    sources?: { file?: string } | { file?: string }[];
+    tracks?: { file?: string; label?: string; kind?: string; default?: boolean }[];
+  };
+  let m3u8: string | undefined;
+  if (j.enc) {
+    m3u8 = (decryptMegaplayEnc(j.enc) as { file?: string }).file;
+  } else {
+    m3u8 = Array.isArray(j.sources) ? j.sources[0]?.file : j.sources?.file;
+  }
+  if (!m3u8) throw new ProviderError("no m3u8 in getSources");
+  const subtitles: SubtitleTrack[] = [];
+  for (const t of j.tracks ?? []) {
+    if (!t.file || (t.kind && t.kind !== "captions")) continue;
+    subtitles.push({
+      src: proxyStreamUrl(t.file, origin),
+      lang: (t.label ?? "en").toLowerCase(),
+      label: t.label ?? "EN",
+      default: subtitles.length === 0,
+    });
+  }
+  return { m3u8, origin, subtitles };
+}
+
 /** Resolve stream links for an episode (hianime episode id, e.g. 21418). */
 export async function resolveStream(
   episodeId: string,
@@ -489,18 +562,22 @@ export async function resolveStream(
     );
   }
 
-  const embed = b64Decode(preferred.hash).toString("utf8");
-  if (!/^https?:\/\//i.test(embed)) throw new ProviderError("bad embed hash");
-  const origin = new URL(embed).origin + "/";
-
-  const embedPage = await fetchText(embed, origin);
-  const blobMatch = /window\.__P="([^"]*)"/.exec(embedPage);
-  if (!blobMatch) throw new ProviderError("embed config blob not found");
-  const data = deobfuscateBlob(blobMatch[1]);
-
-  const m3u8 = findM3u8Src(data);
-  if (!m3u8) throw new ProviderError("no m3u8 in embed config");
-  const subtitles = findSubtitles(data, origin);
+  const wantedServers = [
+    preferred,
+    ...servers.filter((s) => s.type === wanted && s !== preferred),
+  ];
+  let lastErr: unknown = new ProviderError("no servers");
+  let resolved: { m3u8: string; origin: string; subtitles: SubtitleTrack[] } | null = null;
+  for (const srv of wantedServers) {
+    try {
+      resolved = await resolveEmbed(b64Decode(srv.hash).toString("utf8"));
+      break;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  if (!resolved) throw lastErr;
+  const { m3u8, origin, subtitles } = resolved;
 
   // fetch master playlist to enumerate qualities (needs embed referer)
   const masterBody = await fetchText(m3u8, origin);

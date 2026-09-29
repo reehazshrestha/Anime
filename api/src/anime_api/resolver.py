@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urljoin
 
-from .http import Http, ProviderError
+from .http import Http, ProviderError, browser_headers
 from .models import (
     EpisodeInfo,
     QualityPick,
@@ -78,6 +78,24 @@ def find_m3u8_src(data: Any) -> str | None:
             if found:
                 return found
     return None
+
+
+def decrypt_megaplay_enc(enc: str) -> dict:
+    """AES-256-CBC (zero-padded key) payload from MegaPlay's getSources."""
+    from cryptography.hazmat.primitives import padding
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    try:
+        raw = base64.urlsafe_b64decode(enc + "=" * (-len(enc) % 4))
+        dec = Cipher(
+            algorithms.AES(b"i?LMTAx0Q6,:}50U".ljust(32, b"\0")),
+            modes.CBC(b"W0;27ToaUpl_P%'c"),
+        ).decryptor()
+        padded = dec.update(raw) + dec.finalize()
+        unp = padding.PKCS7(128).unpadder()
+        return json.loads(unp.update(padded) + unp.finalize())
+    except Exception as exc:  # noqa: BLE001
+        raise ProviderError("could not decode megaplay payload") from exc
 
 
 def find_subtitles(data: Any, referer: str) -> list[SubtitleTrack]:
@@ -190,6 +208,46 @@ class StreamResolver:
         self.provider = provider
         self.master_cache = http.json_cache  # reuse TTL machinery for masters
 
+    async def _from_megaplay(
+        self, page: str, embed_url: str, origin: str
+    ) -> tuple[str, list[SubtitleTrack]]:
+        """MegaPlay embed: file id in the page, AES-encrypted /stream/getSources."""
+        m = re.search(r'id="megaplay-player"[^>]*?data-id="(\d+)"', page) or re.search(
+            r'data-id="(\d+)"', page
+        )
+        if not m:
+            raise ProviderError("embed config blob not found")
+        resp = await self.http._client.get(
+            f"{origin}stream/getSources?id={m.group(1)}",
+            headers={**browser_headers(embed_url), "X-Requested-With": "XMLHttpRequest"},
+        )
+        if resp.status_code != 200:
+            raise ProviderError(f"getSources {resp.status_code}")
+        j = resp.json()
+        if j.get("enc"):
+            m3u8 = decrypt_megaplay_enc(j["enc"]).get("file")
+        else:
+            src = j.get("sources")
+            src = src[0] if isinstance(src, list) and src else src
+            m3u8 = src.get("file") if isinstance(src, dict) else None
+        if not m3u8:
+            raise ProviderError("no m3u8 in getSources")
+        tracks: list[SubtitleTrack] = []
+        for t in j.get("tracks") or []:
+            f = t.get("file")
+            if not f or (t.get("kind") and t["kind"] != "captions"):
+                continue
+            label = t.get("label") or "en"
+            tracks.append(
+                SubtitleTrack(
+                    src=_proxy_stream(f, origin),
+                    lang=label.lower(),
+                    label=label,
+                    default=not tracks,
+                )
+            )
+        return m3u8, tracks
+
     async def _from_server(
         self, embed_url: str, server_name: str
     ) -> tuple[list[SourceVariant], list[SubtitleTrack], str, str]:
@@ -199,14 +257,14 @@ class StreamResolver:
 
         page = await self.http.text(embed_url, referer=origin)
         blob_match = re.search(r'window\.__P="([^"]*)"', page)
-        if not blob_match:
-            raise ProviderError("embed config blob not found")
-        data = deobfuscate_blob(blob_match.group(1))
-
-        m3u8 = find_m3u8_src(data)
-        if not m3u8:
-            raise ProviderError("no m3u8 in embed config")
-        subtitles = find_subtitles(data, origin)
+        if blob_match:
+            data = deobfuscate_blob(blob_match.group(1))
+            m3u8 = find_m3u8_src(data)
+            if not m3u8:
+                raise ProviderError("no m3u8 in embed config")
+            subtitles = find_subtitles(data, origin)
+        else:
+            m3u8, subtitles = await self._from_megaplay(page, embed_url, origin)
 
         async def fetch_master() -> list[SourceVariant]:
             body = await self.http.text(m3u8, referer=origin, use_cache=False)

@@ -15,11 +15,7 @@ subtitles) → cover-image proxy. **Now also serves the anime-site frontend**
 Most "anime API" projects return a single stream link and call it done. This
 one treats **quality** and **reliability** as first-class:
 
-- **Multi-server resolution** — the provider advertises several embed servers
-  per episode (ZokoAnime, HD-1, Vidstream, …). The resolver tries them in
-  preference order and returns the first that yields a playable master
-  playlist, with a per-server error trace for observability. One dead server
-  never breaks playback.
+- **Multi-server resolution** — the miruro pipe can return streams from several providers/categories per episode. The resolver tries them in preference order and returns the first that yields a playable master playlist, with a per-server error trace for observability. One dead provider never breaks playback.
 - **Full quality enumeration** — every `#EXT-X-STREAM-INF` variant
   (360p–1080p) is parsed, normalized (height + label) and sorted best → worst.
   The response contains `best`, `variants[]`, `preferred_url` and a
@@ -116,13 +112,11 @@ when a provider changes their embed format.
 
 ```
 /api/sources?animeId&ep&mode
-  1. episode list API      → numeric episode id
-  2. servers API           → embed servers for sub|dub (ZokoAnime first)
-  3. base64(hash)          → embed page URL
-  4. window.__P blob       → base64 + XOR "otaku-embed-v1" → JSON config
-  5. config                → master m3u8 + subtitle tracks
-  6. master playlist       → variants[] sorted best → worst
-  → first server with a playable master wins; errors recorded, next tried
+  1. episode list via miruro pipe   → episode numbers + ids
+  2. watch path built from provider/anilistId/category/slug
+  3. pipe watch endpoint            → streams (HLS urls + quality) + subtitles
+  4. response parsed               → variants[] sorted best → worst
+  → first provider/category that yields a playable master wins; errors recorded, next tried
 ```
 
 The upstream video CDN (`hls.1embed.buzz`) **403s without the embed site's
@@ -185,25 +179,29 @@ switching backends.
 ```
 src/anime_api/
   http.py       shared async client: browser headers, retries, TTL caches
-  provider.py   hianime.at scraping: search, home, details, episodes, servers
-  resolver.py   multi-server resolution, blob deobfuscation, quality picking
+  provider.py   AniList-backed catalog + miruro.tv pipe for episodes/streams
+  resolver.py   stream resolution via the miruro pipe, quality picking
   proxy.py      HLS proxy (m3u8 rewrite + segment pipe) + image proxy
   models.py     Pydantic response models
   main.py       FastAPI app + routes
-tests/          26 offline tests (parsers, quality logic, m3u8 rewriting)
+tests/          offline tests (parsers, quality logic, m3u8 rewriting)
 ```
 
 ## Tests
 
 ```bash
-uv run pytest -q        # 26 passed — no network needed
+uv run pytest -q        # offline tests — no network needed
 ```
 
 ## Notes
 
-- One provider (hianime.at) is implemented; `Provider` and `StreamResolver`
-  are separated so additional providers can be added behind the same models.
+- Catalog data comes from the public AniList GraphQL API; episodes and streams
+  come from the miruro.tv secure/pipe tunnel (Cloudflare-bot bypass via
+  curl_cffi Chrome-TLS impersonation).
+- `Provider` (catalog) and `StreamResolver` (streams) are separated so
+  additional sources can be added behind the same models.
 - Hot paths (search, home, details, episodes, master playlists) are cached
   in-process with short TTLs; server-specific pages are not cached.
-- The `/img` proxy allowlists known cover hosts (hianime, anipixcdn, anilist,
-  myanimelist, kitsu) — extend `IMAGE_HOST_ALLOWLIST` as needed.
+- The `/img` proxy allowlists known cover hosts (miruro.tv, anilist.co,
+  artworks.ani.zip, s4.anilist.co, anipixcdn, noip, zokuweb) — extend
+  `IMAGE_HOST_ALLOWLIST` as needed.

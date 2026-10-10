@@ -22,6 +22,11 @@ export function Watch({ animeId, epParam }: { animeId: string; epParam: string |
   const [quality, setQuality] = useState(-1); // -1 = Auto (adaptive), else index into variants
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const resumeAtRef = useRef<number>(0);
+  // resolved stream URLs carry short-lived upstream tokens; a fatal player
+  // error is often just an expired token, not a real failure — re-resolve a
+  // few times before surfacing an error to the user
+  const autoRetryRef = useRef(0);
+  const MAX_AUTO_RETRY = 2;
 
   // load details (episode list, title); saved progress comes from the
   // browser store and is layered on top of the API payload
@@ -62,9 +67,29 @@ export function Watch({ animeId, epParam }: { animeId: string; epParam: string |
   }, [animeId, ep, mode]);
 
   useEffect(() => {
+    autoRetryRef.current = 0; // fresh episode/mode — fresh retry budget
     const cleanup = fetchSources();
     return cleanup;
   }, [fetchSources]);
+
+  const manualRetry = useCallback(() => {
+    autoRetryRef.current = 0;
+    fetchSources();
+  }, [fetchSources]);
+
+  // a fatal player error is usually an expired upstream token, not a real
+  // failure — re-resolve for a fresh signed URL before giving up
+  const handleFatalPlaybackError = useCallback(
+    (message: string) => {
+      if (autoRetryRef.current < MAX_AUTO_RETRY) {
+        autoRetryRef.current++;
+        fetchSources();
+        return;
+      }
+      setSourcesError(message);
+    },
+    [fetchSources],
+  );
 
   // attach player when sources load or a fixed quality is picked
   useEffect(() => {
@@ -133,7 +158,7 @@ export function Watch({ animeId, epParam }: { animeId: string; epParam: string |
             hls?.recoverMediaError();
             return;
           }
-          setSourcesError(`player error: ${data.details}`);
+          handleFatalPlaybackError(`player error: ${data.details}`);
         });
       });
     }
@@ -145,7 +170,7 @@ export function Watch({ animeId, epParam }: { animeId: string; epParam: string |
       video.removeAttribute("src");
       video.load();
     };
-  }, [sources, quality, ep, details]);
+  }, [sources, quality, ep, details, handleFatalPlaybackError]);
 
   // periodic progress saving
   useEffect(() => {
@@ -239,7 +264,7 @@ export function Watch({ animeId, epParam }: { animeId: string; epParam: string |
               crossOrigin="anonymous"
               webkit-playsinline="true"
               onError={() =>
-                setSourcesError(
+                handleFatalPlaybackError(
                   "Video failed to load — the stream may have expired. Try reloading it.",
                 )
               }
@@ -292,7 +317,7 @@ export function Watch({ animeId, epParam }: { animeId: string; epParam: string |
               </select>
             )}
 
-            <button className="btn" onClick={() => fetchSources()}>
+            <button className="btn" onClick={manualRetry}>
               Reload stream
             </button>
           </div>
@@ -318,7 +343,7 @@ export function Watch({ animeId, epParam }: { animeId: string; epParam: string |
                     </button>
                   )}
                   <div style={{ marginTop: 10 }}>
-                    <button className="btn" onClick={() => fetchSources()}>
+                    <button className="btn" onClick={manualRetry}>
                       Retry
                     </button>
                   </div>
@@ -329,7 +354,7 @@ export function Watch({ animeId, epParam }: { animeId: string; epParam: string |
                   <div className="muted" style={{ marginTop: 6 }}>
                     {sourcesError}
                   </div>
-                  <button className="btn" style={{ marginTop: 10 }} onClick={() => fetchSources()}>
+                  <button className="btn" style={{ marginTop: 10 }} onClick={manualRetry}>
                     Retry
                   </button>
                 </>

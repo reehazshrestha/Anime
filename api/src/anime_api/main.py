@@ -36,7 +36,7 @@ from .models import (
     ProgressEntry,
     ResolveResponse,
 )
-from .provider import Provider, is_valid_id
+from .provider import Provider
 from .proxy import proxy_image, proxy_stream
 from .resolver import NoStreamError, StreamResolver
 from .store import UserDataStore, _poster_for
@@ -177,15 +177,6 @@ async def search(request: Request, q: str = Query(..., min_length=1)):
     return {"results": [r.model_dump() for r in results]}
 
 
-async def _related_seasons(provider: Provider, anime_id: str, title: str):
-    """Best-effort franchise entries from search (same as the site backend)."""
-    try:
-        all_results = await provider.search(title)
-        return [r for r in all_results if r.id != anime_id][:12]
-    except Exception:
-        return []
-
-
 @app.get("/api/genre/{genre}")
 async def genre_browse(
     request: Request,
@@ -207,7 +198,7 @@ async def genre_browse(
 @app.get("/api/anime/{anime_id}")
 async def anime_details(request: Request, anime_id: str):
     http, provider, _, store = await state(request)
-    if not is_valid_id(anime_id):
+    if not anime_id.isdigit():
         return error_response(400, "invalid anime id")
     try:
         details = await provider.details(anime_id)
@@ -230,7 +221,7 @@ async def anime_details(request: Request, anime_id: str):
 @app.get("/api/anime/{anime_id}/episodes")
 async def anime_episodes(request: Request, anime_id: str):
     _, provider, _, _ = await state(request)
-    if not is_valid_id(anime_id):
+    if not anime_id.isdigit():
         return error_response(400, "invalid anime id")
     try:
         episodes = await provider.episodes(anime_id)
@@ -254,7 +245,7 @@ async def sources(
     ),
 ) -> ResolveResponse:
     _, provider, resolver, store = await state(request)
-    if not is_valid_id(animeId):
+    if not animeId.isdigit():
         return error_response(400, "invalid anime id")
 
     try:

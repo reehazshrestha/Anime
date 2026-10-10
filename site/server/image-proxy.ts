@@ -9,7 +9,10 @@ import { runtimeConfig } from "./config.js";
 const UA = runtimeConfig.userAgent;
 
 const ALLOWED_HOSTS = new Set([
-  "hianime.at",
+  "miruro.tv",
+  "anilist.co",
+  "artworks.ani.zip",
+  "s4.anilist.co",
   "cdn.anipixcdn.co",
   "cdn.noip.ca",
   "img.zokuweb.xyz",
@@ -46,7 +49,7 @@ export async function imageHandler(req: Request, res: Response): Promise<void> {
   const timer = setTimeout(() => ctrl.abort(), 12_000);
   try {
     const upstream = await fetch(target, {
-      headers: { "User-Agent": UA, Referer: `${new URL(target).origin}/` },
+      headers: { "User-Agent": UA, Referer: "https://www.miruro.tv/" },
       signal: ctrl.signal,
       redirect: "follow",
     });

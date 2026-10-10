@@ -113,7 +113,7 @@ class StreamSources(ApiModel):
     episode: EpisodeInfo
     mode: AudioMode
     server: str = Field(description="embed server the stream was resolved from")
-    via: str = Field(default="hianime", description="resolver that produced the links")
+    via: str = Field(default="miruro", description="resolver that produced the links")
     variants: list[SourceVariant] = Field(description="sorted best -> worst")
     best: SourceVariant = Field(description="highest-quality variant")
     master_url: Optional[str] = Field(

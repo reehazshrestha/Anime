@@ -127,7 +127,7 @@ Anime/
 
 ## ⚠️ Notes & limitations
 
-- **Content source**: all catalog and stream data comes from a third-party provider (hianime.at) which sits behind Cloudflare. Parsers may need updates if its markup changes; cloud IPs are more likely to be challenged (→ `503`).
+- **Content source**: catalog data comes from the public AniList GraphQL API; episodes and streams come from the miruro.tv secure/pipe tunnel (Cloudflare-bot bypass via Chrome TLS impersonation). The API keeps a small in-process TTL cache for catalog + resolved sources.
 - **Personal use** — progress/favorites are stored in a local JSON file, no auth. This project streams from public sources; support the official releases of the anime you love.
 - Year/season/status filters in Discover are UI-only (the provider exposes genre + page).
 

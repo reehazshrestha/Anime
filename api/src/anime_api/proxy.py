@@ -18,7 +18,6 @@ from fastapi import Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from .http import USER_AGENT, Http
-from .resolver import KNOWN_EMBED_ORIGINS
 
 CHUNK = 64 * 1024
 
@@ -96,9 +95,11 @@ async def proxy_stream(
     target_origin = referer_for(target, None)
     if target_origin not in referers:
         referers.append(target_origin)
-    for extra in KNOWN_EMBED_ORIGINS:
-        if extra not in referers:
-            referers.append(extra)
+    # Miruro streams come from various CDN origins — try the target first,
+    # then the Miruro base as a fallback
+    miruro_origin = "https://www.miruro.tv/"
+    if miruro_origin not in referers:
+        referers.append(miruro_origin)
 
     headers = {"User-Agent": USER_AGENT, "Accept": "*/*"}
     if range_header:
@@ -159,10 +160,9 @@ async def proxy_stream(
 
 # image proxy: cover hosts send no CORS headers and sometimes check Referer
 IMAGE_HOST_ALLOWLIST = (
-    "hianime.at",
-    "hianime.to",
-    "anipixcdn.co",
-    "s4.anilist.co",
+    "miruro.tv",
+    "anilist.co",
+    "ani.zip",
     "cdn.myanimelist.net",
     "img.anili.st",
     "media.kitsu.app",
@@ -187,7 +187,7 @@ async def proxy_image(http: Http, path: str) -> Response:
     try:
         upstream = await http._client.get(
             target,
-            headers={"User-Agent": USER_AGENT, "Accept": "image/*", "Referer": "https://hianime.at/"},
+            headers={"User-Agent": USER_AGENT, "Accept": "image/*", "Referer": "https://www.miruro.tv/"},
         )
         upstream.raise_for_status()
     except Exception as exc:

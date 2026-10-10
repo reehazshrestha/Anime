@@ -72,7 +72,7 @@ export interface EpisodeSources {
   masterUrl?: string;
   subtitles?: SubtitleTrack[];
   /** Which resolver produced the links. */
-  via?: "ani-cli" | "scraper";
+  via?: "ani-cli" | "miruro";
 }
 
 export interface ProgressEntry {

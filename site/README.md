@@ -7,10 +7,13 @@ stream resolution, quality selection, genre browsing, HLS proxy and user-data
 storage. It also serves this site's production build, so one process runs
 everything.
 
-> A legacy Node backend lives in this repo's `server/` (ani-cli port, port
-> 8787). It still works for basic playback but **does not implement the newer
-> routes** (`/api/genre`, `/img` backfill, `features` health) — running the
-> site against it will 404 on Discover/genre and poster proxying.
+> A legacy Node backend lives in this repo's `server/` (port 8787). It now
+> **bridges every content route** (`/api/home`, `/api/search`, `/api/anime/*`,
+> `/api/sources`, `/api/genre/*`, `/img`) to the FastAPI anime-api so the site
+> works the same whether you point it at :8000 (anime-api) or :8787 (the Node
+> server) — as long as anime-api is reachable. The Node server still owns the
+> user-data routes (`/api/progress`, `/api/favorites`), the static build, and the
+> `/stream` proxy.
 
 ## Pages
 

@@ -1,58 +1,56 @@
-"""Tests for the deobfuscation + config parsing helpers (no network)."""
+"""Tests for the Miruro pipe resolver (no network)."""
 
 from __future__ import annotations
 
-import base64
-
-from anime_api.http import ProviderError
-from anime_api.resolver import deobfuscate_blob, find_m3u8_src, find_subtitles
+from anime_api.resolver import parse_height, pick_quality
+from anime_api.models import SourceVariant
 
 
-def encode(obj) -> str:
-    raw = str(obj).encode()
-    key = b"otaku-embed-v1"
-    out = bytes(b ^ key[i % len(key)] for i, b in enumerate(raw))
-    return base64.b64encode(out).decode()
+def make_variants() -> list[SourceVariant]:
+    return [
+        SourceVariant(quality="1080p", height=1080, url="/stream/1080", raw_url="https://cdn/1080"),
+        SourceVariant(quality="720p", height=720, url="/stream/720", raw_url="https://cdn/720"),
+        SourceVariant(quality="360p", height=360, url="/stream/360", raw_url="https://cdn/360"),
+    ]
 
 
-def test_deobfuscate_blob_roundtrip():
-    blob = encode('{"source":[{"file":"https://cdn/x.m3u8"}]}')
-    data = deobfuscate_blob(blob)
-    assert data["source"][0]["file"].endswith(".m3u8")
+def test_parse_height():
+    assert parse_height("1080p") == 1080
+    assert parse_height("720") == 720
+    assert parse_height("auto") == 0
 
 
-def test_deobfuscate_blob_garbage_raises():
-    blob = base64.b64encode(b"not-xor-json").decode()
-    try:
-        deobfuscate_blob(blob)
-    except ProviderError as exc:
-        assert "could not decode" in str(exc)
-    else:
-        raise AssertionError("expected ProviderError")
+def test_pick_quality_best_default():
+    variants = make_variants()
+    chosen, pick = pick_quality(variants, None)
+    assert chosen.quality == "1080p"
+    assert pick.strategy == "best"
 
 
-def test_find_m3u8_src_nested():
-    data = {"a": {"b": [{"src": "https://cdn/master.m3u8"}]}, "c": "x"}
-    assert find_m3u8_src(data) == "https://cdn/master.m3u8"
+def test_pick_quality_explicit_exact():
+    variants = make_variants()
+    chosen, pick = pick_quality(variants, "720p")
+    assert chosen.quality == "720p"
+    assert pick.strategy == "explicit"
+    assert pick.requested == "720p"
 
 
-def test_find_m3u8_src_missing():
-    assert find_m3u8_src({"src": "https://cdn/file.mp4"}) is None
-    assert find_m3u8_src("plain") is None
+def test_pick_quality_fallback_down():
+    """Requesting 480p when only 360/720/1080 exist serves 360p (closest below)."""
+    variants = make_variants()
+    chosen, pick = pick_quality(variants, "480")
+    assert chosen.quality == "360p"
+    assert pick.strategy == "fallback"
 
 
-def test_find_subtitles():
-    data = {
-        "subtitles": [
-            {"src": "https://cdn/en.vtt", "lang": "English"},
-            {"src": "https://cdn/es.vtt", "lang": "Spanish"},
-        ]
-    }
-    tracks = find_subtitles(data, "https://embed.example/")
-    assert len(tracks) == 2
-    assert tracks[0].lang == "English"
-    assert tracks[0].label == "ENGLISH"
-    assert tracks[0].default is True
-    assert tracks[1].default is False
-    assert tracks[0].src.startswith("/stream/")
-    assert "ref=" in tracks[0].src
+def test_pick_quality_unknown_string_serves_best():
+    variants = make_variants()
+    chosen, pick = pick_quality(variants, "ultra-hd")
+    assert chosen.quality == "1080p"
+    assert pick.strategy == "best"
+
+
+def test_pick_quality_auto_equals_best():
+    variants = make_variants()
+    chosen, _ = pick_quality(variants, "auto")
+    assert chosen.quality == "1080p"

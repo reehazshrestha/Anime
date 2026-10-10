@@ -1,110 +1,128 @@
-"""Tests for HTML/JSON parsing helpers (no network)."""
+"""Tests for AniList media parsing helpers + Miruro pipe decoding (no network)."""
 
 from __future__ import annotations
 
 import pytest
 
 from anime_api.http import NotFoundError, UpstreamBlocked
+from anime_api.models import AnimeDetails
 from anime_api.provider import (
-    parse_episode_list,
-    parse_home,
-    parse_search,
-    parse_servers,
+    _media_to_search_result,
+    _media_to_details,
+    _home_item_from_media,
 )
 
-# ---------------- search ----------------
 
-SEARCH_HTML = """
-<div id="main-content">
-  <div class="flw-item">
-    <div class="film-poster">
-      <img class="film-poster-img" src="https://img.example/a.jpg">
-    </div>
-    <h3 class="film-name"><a href="/watch/one-piece-100" title="One Piece">One Piece</a></h3>
-  </div>
-  <div class="flw-item">
-    <h3 class="film-name"><a href="/watch/naruto-99" title="Naruto">Naruto</a></h3>
-  </div>
-</div>
-<div id="main-sidebar">dupes live here <h3 class="film-name"><a href="/watch/one-piece-100" title="One Piece">One Piece</a></h3></div>
-"""
+SAMPLE_MEDIA = {
+    "id": 154587,
+    "title": {
+        "romaji": "Sousou no Frieren",
+        "english": "Frieren: Beyond Journey's End",
+        "native": "葬送のフリーレン",
+    },
+    "coverImage": {
+        "large": "https://s4.anilist.co/file/cover.jpg",
+        "extraLarge": "https://s4.anilist.co/file/cover_big.jpg",
+    },
+    "bannerImage": "https://s4.anilist.co/file/banner.jpg",
+    "format": "TV",
+    "season": "FALL",
+    "seasonYear": 2023,
+    "episodes": 28,
+    "duration": 25,
+    "status": "FINISHED",
+    "averageScore": 87,
+    "meanScore": 89,
+    "popularity": 123456,
+    "favourites": 5000,
+    "genres": ["Action", "Adventure", "Drama", "Fantasy"],
+    "source": "ORIGINAL",
+    "countryOfOrigin": "JP",
+    "isAdult": False,
+}
+
+SAMPLE_MEDIA_FULL = {
+    **SAMPLE_MEDIA,
+    "idMal": 52991,
+    "description": "The adventure of Frieren the elf mage begins...",
+    "synonyms": [],
+    "siteUrl": "https://anilist.co/anime/154587",
+    "studios": {"nodes": [{"id": 1, "name": "Madhouse", "isAnimationStudio": True}]},
+    "nextAiringEpisode": None,
+    "startDate": {"year": 2023, "month": 9, "day": 29},
+    "endDate": {"year": 2024, "month": 3, "day": 22},
+    "tags": [{"name": "Magic", "rank": 90, "isMediaSpoiler": False}],
+    "trailer": {"id": "abc123", "site": "youtube", "thumbnail": "https://img.youtube.com/vi/abc123.jpg"},
+    "relations": {
+        "edges": [
+            {
+                "relationType": "SEQUEL",
+                "node": {
+                    "id": 176582,
+                    "title": {"romaji": "Sousou no Frieren 2", "english": "Frieren Season 2"},
+                    "coverImage": {"large": "https://s4.anilist.co/seq.jpg"},
+                    "format": "TV",
+                    "type": "ANIME",
+                    "status": "RELEASING",
+                    "episodes": None,
+                    "meanScore": None,
+                },
+            }
+        ]
+    },
+    "streamingEpisodes": [],
+}
 
 
-def test_parse_search():
-    results = parse_search(SEARCH_HTML)
-    assert [r.id for r in results] == ["one-piece-100", "naruto-99"]
-    assert results[0].title == "One Piece"
-    assert results[0].poster is not None and results[0].poster.startswith("/img/")
+def test_media_to_search_result():
+    result = _media_to_search_result(SAMPLE_MEDIA)
+    assert result.id == "154587"
+    assert result.title == "Frieren: Beyond Journey's End"
+    assert result.poster is not None and "/img/" in result.poster
+
+
+def test_media_to_search_result_no_english():
+    result = _media_to_search_result({"id": 1, "title": {"romaji": "Test", "native": "テスト"}})
+    assert result.title == "Test"
+    assert result.poster is None
+
+
+def test_media_to_details():
+    details = _media_to_details(SAMPLE_MEDIA_FULL)
+    assert isinstance(details, AnimeDetails)
+    assert details.id == "154587"
+    assert details.title == "Frieren: Beyond Journey's End"
+    assert details.mal_id == 52991
+    assert details.description == "The adventure of Frieren the elf mage begins..."
+    assert details.meta is not None
+    assert "Action" in details.meta.genres
+    assert details.meta.status == "Finished"
+    assert details.meta.mal_score == "87"
+    assert details.meta.studios == "Madhouse"
+    assert len(details.seasons) == 1
+    assert details.seasons[0].id == "176582"
+
+
+def test_media_to_details_no_relations():
+    minimal = {**SAMPLE_MEDIA_FULL, "relations": {"edges": []}, "studios": {"nodes": []}}
+    details = _media_to_details(minimal)
+    assert details.seasons == []
+
+
+def test_home_item_from_media():
+    item = _home_item_from_media(SAMPLE_MEDIA)
+    assert item.id == "154587"
+    assert item.type == "TV"
+    assert item.ep_count == 28
+    assert item.poster is not None
 
 
 def test_parse_search_blocked_page():
     with pytest.raises(UpstreamBlocked):
+        from anime_api.provider import parse_search
         parse_search("<html>Just a moment...</html>")
 
 
-# ---------------- home ----------------
-
-HOME_HTML = """
-<div id="trending-home">
-  <div class="number">1</div><div data-jname="Frieren"></div>
-  <a href="/watch/frieren-1"><img src="https://img.example/f.jpg"></a>
-</div>
-<div>Main grid
-  <div class="flw-item"><h3 class="film-name"><a href="/watch/latest-a-1" title="Latest A">Latest A</a></h3>
-    <div class="tick-sub" data-count="8">8</div></div>
-  <div class="flw-item"><h3 class="film-name"><a href="/watch/movie-b-2" title="Movie B">Movie B</a></h3>
-    <div class="fdi-item">MOVIE</div></div>
-</div>
->Top 10<
-<div id="top-viewed-day">
-  <div class="film-number">1</div><img src="https://img.example/t.jpg">
-  <a href="/watch/top-c-3" title="Top C">Top C</a>
-</div>
->Top Upcoming<
-<div class="flw-item"><h3 class="film-name"><a href="/watch/upcoming-d-4" title="Upcoming D">Upcoming D</a></h3></div>
->Genres<
-"""
-
-
-def test_parse_home_sections():
-    sections = parse_home(HOME_HTML)
-    by_id = {s.id: s for s in sections}
-    assert by_id["trending"].items[0].id == "frieren-1"
-    # MOVIE entries are filtered out of "latest episodes"
-    assert [i.id for i in by_id["latest-episodes"].items] == ["latest-a-1"]
-    assert by_id["top10-day"].items[0].id == "top-c-3"
-    assert by_id["upcoming"].items[0].id == "upcoming-d-4"
-
-
-def test_parse_home_degrades_to_empty():
-    assert parse_home("<html><body>nothing here</body></html>") == []
-
-
-# ---------------- episodes ----------------
-
-EPISODES_JSON = '{"html":"<div data-number=\\"1\\" data-id=\\"201\\" href=\\"/watch/one-piece-100?ep=201\\"></div>\\n<div data-number=\\"2\\" data-id=\\"202\\" href=\\"/watch/one-piece-100?ep=202\\"></div>"}'
-
-
-def test_parse_episode_list():
-    eps = parse_episode_list(EPISODES_JSON, "one-piece-100")
-    assert [(e.number, e.id) for e in eps] == [("1", "201"), ("2", "202")]
-
-
-def test_parse_episode_list_wrong_anime_filtered():
-    # episodes pointing at a different anime slug are filtered out -> none found
-    with pytest.raises(NotFoundError):
-        parse_episode_list(EPISODES_JSON, "naruto-99")
-    with pytest.raises(NotFoundError):
-        parse_episode_list("{}", "one-piece-100")
-
-
-# ---------------- servers ----------------
-
-SERVERS_JSON = '{"html":"<div data-type=\\"sub\\" data-server-name=\\"ZokoAnime\\" data-hash=\\"aGF4\\"></div><div data-type=\\"dub\\" data-server-name=\\"Megaplay\\" data-hash=\\"aGF4Mg==\\"></div>"}'
-
-
-def test_parse_servers():
-    servers = parse_servers(SERVERS_JSON)
-    assert len(servers) == 2
-    assert servers[0].type == "sub" and servers[0].name == "ZokoAnime"
-    assert servers[1].hash == "aGF4Mg=="
+# Legacy parse_search still exists but only for the blocked-page check
+# The rest of the old parser is no longer used; these tests ensure we
+# still detect Cloudflare blocks properly.

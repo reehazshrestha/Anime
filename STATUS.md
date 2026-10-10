@@ -19,7 +19,7 @@ One command runs everything: `cd anime-api && uv run anime-api` → **http://loc
 
 | Feature | Status | Notes |
 |---|---|---|
-| Catalog: home rails, search, details, episodes | ✅ Working | hianime.at provider, HTML parsing, TTL-cached |
+| Catalog: home rails, search, details, episodes | ✅ Working | AniList GraphQL API (public) for catalog; miruro.tv pipe for episodes + streams; TTL-cached |
 | Genre browsing | ✅ Working | `/api/genre/{genre}?page=N` via provider `/filter` endpoint; verified 12 consecutive page hits: 12× 200 |
 | Search suggestions | ✅ Working | Debounced client → `/api/search`, cached server-side |
 | **Multi-server stream resolution** | ✅ Working | ZokoAnime → HD-1 → Vidstream, first playable wins, per-server error trace |
@@ -79,8 +79,8 @@ One command runs everything: `cd anime-api && uv run anime-api` → **http://loc
 └───────────────┬────────────────────────────────────────────────────┘
                 │  httpx (browser-ish headers, Referer checks)
         ┌───────▼────────┐   ┌──────────────────────────────┐
-        │  hianime.at    │   │  video CDN (hls.1embed.buzz) │
-        │  (Cloudflare)  │   │  demands embed Referer       │
+        │  miruro.tv     │   │  video CDN (per-stream)      │
+        │  (pipe / secure)│   │  demands Referer + origin   │
         └────────────────┘   └──────────────────────────────┘
 ```
 
@@ -198,7 +198,7 @@ cd anime-site && npm run dev        # Vite on :5173, proxies to :8000
 
 - Python 3.12+ with [uv](https://docs.astral.sh/uv/)
 - Node 18+ with npm
-- A network where **hianime.at** loads normally (the provider sits behind Cloudflare)
+- A network where miruro.tv loads normally in a browser (its pipe endpoint sits behind Cloudflare; the API bypasses it with a browser-TLS impersonation session)
 
 ---
 
@@ -228,8 +228,7 @@ in VLC (Media → Open Network Stream), or just press play on the watch page.
 - **Discover year/season/status filters** are UI-only — the provider's filter
   endpoint exposes genre + page reliably; the others aren't wired.
 - **Sort** beyond A–Z relies on provider ordering.
-- **Provider dependency**: everything comes from hianime.at. If it changes its
-  markup, the relevant parser needs updating (tests will show exactly which).
+- **Provider dependency**: catalog comes from AniList's public GraphQL API; episodes/streams come from the miruro.tv secure/pipe tunnel. The pipe endpoint sits behind Cloudflare and is reached via a curl_cffi Chrome-TLS impersonation session; catalog parsing is stable because it's API-backed, not HTML scraping.
 - **Single-user** user-data store (JSON file, no auth). Fine for local/personal
   use; not multi-tenant.
 - **Latest-verified date matters**: parsers rot when the provider changes.
@@ -242,7 +241,7 @@ in VLC (Media → Open Network Stream), or just press play on the watch page.
 |---|---|---|
 | Discover/genre shows `endpoint not found … site is not talking to anime-api` | Request hit the **legacy Node backend (:8787)** or a stale process — it 404s `/api/genre` and `/img` with an HTML page | Start the right backend: `cd anime-api && uv run anime-api`; stop strays (`ss -tlnp \| grep -E '8000\|8787'`); never point `BACKEND_ORIGIN` at :8787 || Any page says *"the API server looks out of date"* or a raw `request failed (404)` with JSON `{detail}` | A **stale anime-api process** from before a feature was added is still holding :8000 | `kill` it and restart: `cd anime-api && uv run anime-api` (check `/health` → `features` to confirm) |
 | History/favorites missing on a different device | User data is **browser-local by design** (private, no accounts) | Use the same browser/profile, or wire the optional server-side `/api/progress`+`/api/favorites` store back in |
-| `503 provider is blocking automated access` | Cloudflare challenge on your IP | Wait, or run from a network where hianime.at works in your browser |
+| `503 provider is blocking automated access` | Cloudflare challenge on your IP | Wait, or run from a network where miruro.tv works in your browser |
 | Banners missing in My List / Continue / History | Store entry predates poster capture | Auto-backfills on first GET with the new server — restart the API and refresh |
 | Port 8000 already in use | Old process | `kill $(ss -tlnp \| grep :8000 \| grep -oP 'pid=\K[0-9]+' \| sort -u)` |
 | Segment/seek fails | Upstream CDN hiccup | Retry; resolver picks another server on next `/api/sources` call |

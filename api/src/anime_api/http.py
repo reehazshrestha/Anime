@@ -1,27 +1,46 @@
 """Shared HTTP client with browser headers, retries and TTL caching.
 
-The provider (hianime.at) sits behind Cloudflare and checks Referer on its
-static APIs; every request goes through here so the browser-ish header set is
-consistent, transient 5xx/connection errors are retried, and hot paths
-(search, episode lists) hit an in-process TTL cache instead of the wire.
+Two backends:
+  - httpx-based Http for AniList GraphQL queries (public API, no Cloudflare).
+  - curl_cffi-based pipe for the Miruro secure/pipe tunnel (Cloudflare-bot
+    bypass via Chrome TLS fingerprint impersonation).
+
+The provider (miruro.tv) sits behind Cloudflare on its pipe endpoint;
+catalog data comes from the public AniList GraphQL API instead.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
+import gzip
 import json
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+from curl_cffi.requests import AsyncSession
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
-BASE = "https://hianime.at"
+MIRURO_BASE = "https://www.miruro.tv"
+MIRURO_PIPE_URL = f"{MIRURO_BASE}/api/secure/pipe"
+ANILIST_API = "https://graphql.anilist.co"
+
+MIRURO_HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Referer": f"{MIRURO_BASE}/",
+    "Origin": MIRURO_BASE,
+    "Accept": "*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-dest": "empty",
+}
 
 
 class ProviderError(Exception):
@@ -30,6 +49,10 @@ class ProviderError(Exception):
 
 class UpstreamBlocked(ProviderError):
     """Cloudflare challenge page detected — provider is refusing bots."""
+
+
+class PipeError(ProviderError):
+    """Miruro pipe tunnel failure."""
 
 
 class NotFoundError(Exception):
@@ -43,8 +66,28 @@ def browser_headers(referer: str | None = None) -> dict[str, str]:
         "Accept": "text/html,application/json,*/*",
         "Accept-Language": "en-US,en;q=0.9",
     }
-    headers["Referer"] = referer or f"{BASE}/"
+    headers["Referer"] = referer or f"{MIRURO_BASE}/"
     return headers
+
+
+def _encode_pipe_request(payload: dict) -> str:
+    """Base64-url-encode a pipe request payload (no padding)."""
+    return base64.urlsafe_b64encode(
+        json.dumps(payload).encode()
+    ).decode().rstrip("=")
+
+
+def _decode_pipe_response(encoded: str) -> dict:
+    """Decode a Miruro pipe response: base64url → gzip → json."""
+    try:
+        # restore padding
+        pad = 4 - len(encoded) % 4
+        if pad != 4:
+            encoded += "=" * pad
+        compressed = base64.urlsafe_b64decode(encoded)
+        return json.loads(gzip.decompress(compressed).decode("utf-8"))
+    except Exception as exc:
+        raise PipeError(f"failed to decode pipe response: {exc}") from exc
 
 
 def looks_blocked(body: str) -> bool:
@@ -91,7 +134,10 @@ class TtlCache:
 
 
 class Http:
-    """One async client per app; call :meth:`aclose` on shutdown."""
+    """One async client per app; call :meth:`aclose` on shutdown.
+
+    Uses httpx for AniList GraphQL and curl_cffi for the Miruro pipe.
+    """
 
     def __init__(self, timeout: float = 15.0, retries: int = 2) -> None:
         self._client = httpx.AsyncClient(
@@ -100,12 +146,21 @@ class Http:
             headers=browser_headers(),
             http2=False,
         )
+        # curl_cffi session for the Cloudflare-protected pipe endpoint
+        self._cf_session: AsyncSession | None = None
         self._retries = retries
         self.html_cache = TtlCache(ttl=600)
         self.json_cache = TtlCache(ttl=300)
 
+    async def _ensure_cf_session(self) -> AsyncSession:
+        if self._cf_session is None:
+            self._cf_session = AsyncSession(impersonate="chrome124")
+        return self._cf_session
+
     async def aclose(self) -> None:
         await self._client.aclose()
+        if self._cf_session is not None:
+            await self._cf_session.close()
 
     async def text(
         self,
@@ -137,11 +192,12 @@ class Http:
                 except (httpx.TimeoutException, httpx.TransportError) as exc:
                     last_exc = exc
                 except httpx.HTTPStatusError as exc:
-                    # 5xx is transient; 4xx (other than handled) is not
                     if exc.response.status_code >= 500:
                         last_exc = exc
                         continue
-                    raise ProviderError(f"upstream {exc.response.status_code} for {url}") from exc
+                    raise ProviderError(
+                        f"upstream {exc.response.status_code} for {url}"
+                    ) from exc
             raise ProviderError(f"upstream unreachable for {url}: {last_exc}")
 
         if use_cache:
@@ -167,3 +223,57 @@ class Http:
         if use_cache:
             return await self.json_cache.wrap(f"json:{url}", fetch)
         return await fetch()
+
+    async def anilist_query(self, query: str, variables: dict | None = None) -> dict:
+        """Run a GraphQL query against the public AniList API."""
+        body: dict[str, Any] = {"query": query}
+        if variables:
+            body["variables"] = variables
+        resp = await self._client.post(
+            ANILIST_API,
+            json=body,
+            headers={
+                "User-Agent": USER_AGENT,
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+        )
+        if resp.status_code != 200:
+            raise ProviderError(f"AniList query failed: {resp.status_code}")
+        data = resp.json().get("data", {})
+        if not data:
+            raise NotFoundError("AniList returned no data")
+        return data
+
+    async def pipe(self, path: str, query: dict | None = None) -> dict:
+        """Call the Miruro secure/pipe tunnel with a GET request.
+
+        Parameters
+        ----------
+        path : str
+            The pipe path, e.g. ``"episodes"`` or ``"watch/kiwi/178005/sub/..."``.
+        query : dict or None
+            Query parameters for the pipe (e.g. ``{"anilistId": 178005}``).
+        """
+        session = await self._ensure_cf_session()
+        payload = {
+            "path": path,
+            "method": "GET",
+            "query": query or {},
+            "body": None,
+            "version": "0.1.0",
+        }
+        encoded_req = _encode_pipe_request(payload)
+        try:
+            resp = await session.get(
+                f"{MIRURO_PIPE_URL}?e={encoded_req}",
+                headers=MIRURO_HEADERS,
+            )
+        except Exception as exc:
+            raise PipeError(f"pipe request failed: {exc}") from exc
+
+        if resp.status_code != 200:
+            raise PipeError(
+                f"pipe returned {resp.status_code}"
+            )
+        return _decode_pipe_response(resp.text.strip())

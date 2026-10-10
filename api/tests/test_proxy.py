@@ -45,7 +45,7 @@ def test_proxy_stream_url_shape():
 
 def test_image_allowlist():
     assert image_allowed("https://s4.anilist.co/file.jpg")
-    assert image_allowed("https://hianime.at/x.jpg")
+    assert image_allowed("https://artworks.ani.zip/file.png")
     assert image_allowed("https://cdn.myanimelist.net/x.jpg")
     assert not image_allowed("https://evil.example/x.jpg")
     assert not image_allowed("not-a-url")

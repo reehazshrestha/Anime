@@ -1,6 +1,6 @@
 import { Bookmark, Compass, History as HistoryIcon, PlayCircle, Settings as SettingsIcon } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, getApiBase, setApiBase } from "../api.js";
+import { api, getApiBase, setApiBase, CLOUD_API } from "../api.js";
 import {
   listProgress,
   listFavorites,
@@ -12,8 +12,6 @@ import { useTheme } from "../theme.js";
 import { AnimeCard } from "./AnimeCard.js";
 import { CardSkeletons, EmptyState } from "./ui/primitives.js";
 import type { FavoriteEntry, ProgressEntry } from "../../shared/types.js";
-
-const CLOUD_API = "https://anime-api-rho-three.vercel.app";
 
 /**
  * Backend picker: same-origin (local `uv run anime-api`) or the deployed

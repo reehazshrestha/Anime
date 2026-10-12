@@ -20,6 +20,11 @@ import type {
 // ---------------------------------------------------------------------
 const API_BASE_KEY = "anistream.apiBase";
 
+// Default cloud backend for reconnect prompts when the running backend
+// doesn't look like anime-api. Kept in one place so the site and the
+// Settings picker agree.
+export const CLOUD_API = "https://anime-api-rho-three.vercel.app";
+
 function trimSlash(url: string): string {
   return url.replace(/\/+$/, "");
 }
@@ -51,6 +56,28 @@ export function setApiBase(base: string): void {
     /* ignore */
   }
   window.location.reload();
+}
+
+/** Detect whether the running backend looks like anime-api.
+ * A real anime-api answers /health with {ok:true, features:[...]}; a
+ * stale/ wrong backend (static SPA rewrite, old Node server, 404 HTML)
+ * does not.
+ */
+export async function isAnimeApi(base: string): Promise<boolean> {
+  const url = base ? base : window.location.origin;
+  try {
+    const res = await fetch(url + "/health", { cache: "no-store" });
+    if (!res.ok) return false;
+    const body = (await res.json().catch(() => ({}))) as { ok?: boolean; features?: unknown[] };
+    return Boolean(body?.ok && Array.isArray(body?.features));
+  } catch {
+    return false;
+  }
+}
+
+/** Best-guess default cloud backend when the current one looks wrong. */
+export function defaultCloudBackend(): string {
+  return CLOUD_API;
 }
 
 /** Points "/img/…" and "/stream/…" URLs returned by the API at the right host. */

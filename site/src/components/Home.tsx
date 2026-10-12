@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Info, Play, Plus, Check } from "lucide-react";
-import { api } from "../api.js";
+import { api, isAnimeApi, CLOUD_API, setApiBase, getApiBase } from "../api.js";
 import { listProgress, listFavorites, addFavorite, removeFavorite } from "../userStore.js";
 import { AnimeCard } from "./AnimeCard.js";
 import { Rail } from "./Rail.js";
@@ -74,12 +74,7 @@ export function Home() {
   return (
     <div className="page">
       {error && (
-        <div className="error-box">
-          <strong>Could not load the catalog.</strong>
-          <div className="muted" style={{ marginTop: 6 }}>
-            {error}
-          </div>
-        </div>
+        <CatalogError error={error} />
       )}
 
       {/* 1) continue watching hero dominates if present, else featured anime */}
@@ -150,6 +145,58 @@ export function Home() {
         </span>
         <span>For personal use · respect the providers</span>
       </footer>
+    </div>
+  );
+}
+
+/* ---------------- featured hero (trending #1) ---------------- */
+
+function CatalogError({ error }: { error: string }) {
+  const [looksWrong, setLooksWrong] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    // If the error already says the site is not talking to anime-api, or the
+    // API server looks out of date, verify against /health before suggesting the
+    // cloud backend — we only want to offer the switch when the current backend
+    // really does not look like anime-api.
+    if (!error.includes("not talking to anime-api") && !error.includes("API server looks out of date")) {
+      setLooksWrong(false);
+      return;
+    }
+    isAnimeApi(getApiBase())
+      .then((ok) => {
+        if (!alive) return;
+        setLooksWrong(!ok);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setLooksWrong(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [error]);
+
+  const fix = () => setApiBase(CLOUD_API);
+
+  return (
+    <div className="error-box">
+      <strong>Could not load the catalog.</strong>
+      <div className="muted" style={{ marginTop: 6 }}>
+        {error}
+      </div>
+      {looksWrong && (
+        <div style={{ marginTop: 10 }}>
+          <button className="btn btn-primary" onClick={fix}>
+            Switch to the deployed API
+          </button>
+          <div className="muted" style={{ marginTop: 6 }}>
+            This site appears to be talking to the wrong backend. Tap to switch
+            to the deployed API and reload.
+          </div>
+        </div>
+      )}
     </div>
   );
 }

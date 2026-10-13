@@ -122,6 +122,15 @@ async def state(request: Request):
     )
 
 
+async def _related_seasons(provider: Provider, anime_id: str, title: str):
+    """Best-effort franchise entries from search (same as the site backend)."""
+    try:
+        all_results = await provider.search(title)
+        return [r for r in all_results if r.id != anime_id][:12]
+    except Exception:
+        return []
+
+
 def error_response(status: int, message: str) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status)
 

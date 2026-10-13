@@ -1,13 +1,14 @@
 """Stream resolver for the Miruro provider.
 
-Miruro's pipe tunnel returns episode streams directly, so the resolver is
-a thin wrapper: it encodes the watch path from a ServerEntry, calls the
-pipe, then maps the response to our StreamSources model.
+Miruro's catalog API (miruro.tv/api/v1) returns per-episode "play" data:
+for the requested episode it lists providers (kickassanime, anikoto, ...),
+each with embed servers, HLS master-playlist urls, required Referer headers
+and subtitle tracks.
 
-The Miruro pipe returns HLS master urls with quality information and
-optional subtitle tracks — all the work the old resolver did (embed server
-chain, XOR/AES decryption, master playlist parsing) is handled upstream
-by the Miruro backend.
+The resolver picks the track matching the wanted audio mode (sub/dub),
+walks providers/servers until one yields a playable master playlist,
+enumerates the quality variants from that playlist, and returns everything
+routed through the local /stream proxy (with the server's Referer attached).
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urljoin
 
 from .http import Http, ProviderError
 from .models import (
@@ -26,6 +28,8 @@ from .models import (
     SubtitleTrack,
 )
 from .provider import Provider
+
+MIRURO_REFERER = "https://www.miruro.tv/"
 
 
 class NoStreamError(Exception):
@@ -41,6 +45,54 @@ def _proxy_stream(raw: str, referer: str) -> str:
 def parse_height(quality: str) -> int:
     m = re.search(r"(\d+)", quality)
     return int(m.group(1)) if m else 0
+
+
+def parse_master_playlist(
+    body: str, master_url: str, referer: str
+) -> list[SourceVariant]:
+    """Parse #EXT-X-STREAM-INF variants from an HLS master playlist.
+
+    Returns one SourceVariant per variant playlist, best (tallest) first.
+    Every variant is routed through the local /stream proxy with the embed
+    server's Referer so the CDN accepts the request.
+    """
+    variants: list[SourceVariant] = []
+    resolution: dict[int, str] = {}  # bandwidth -> "WxH"
+    pending: dict[str, Any] = {}
+    uri: str | None = None
+
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#EXT-X-STREAM-INF"):
+            attrs = stripped.split(":", 1)[1]
+            res = re.search(r"RESOLUTION=(\d+)x(\d+)", attrs)
+            bw = re.search(r"BANDWIDTH=(\d+)", attrs)
+            pending = {
+                "w": int(res.group(1)) if res else 0,
+                "h": int(res.group(2)) if res else 0,
+                "bw": int(bw.group(1)) if bw else 0,
+            }
+        elif not stripped.startswith("#") and pending:
+            uri = stripped
+            height = pending["h"] or 0
+            width = pending["w"] or 0
+            url = urljoin(master_url, uri)
+            variants.append(
+                SourceVariant(
+                    quality=f"{height}p" if height else "auto",
+                    height=height or None,
+                    url=_proxy_stream(url, referer),
+                    raw_url=url,
+                )
+            )
+            pending = {}
+            uri = None
+
+    # sort best-first: by height, then bandwidth
+    variants.sort(key=lambda v: (v.height or 0), reverse=True)
+    return variants
 
 
 def pick_quality(
@@ -86,8 +138,19 @@ class _Resolution:
     info: ResolverInfo
 
 
+@dataclass
+class _Candidate:
+    """One playable stream candidate from the play data."""
+
+    provider: str
+    server: str
+    url: str          # master m3u8 url
+    referer: str      # CDN-required referer
+    track: str        # sub / dub / ssub / es ...
+
+
 class StreamResolver:
-    """Resolves episodes → playable HLS sources via the Miruro pipe."""
+    """Resolves episodes → playable HLS sources via the Miruro catalog."""
 
     def __init__(self, http: Http, provider: Provider) -> None:
         self.http = http
@@ -102,16 +165,17 @@ class StreamResolver:
         quality: str | None = None,
         anime_title: str | None = None,
     ) -> _Resolution:
-        """Resolve stream sources for one episode via Miruro pipe."""
-        servers = await self.provider.servers(episode.id)
+        """Resolve stream sources for one episode via the Miruro catalog."""
         wanted = "dub" if mode == "dub" else "sub"
 
-        seen_names = list(dict.fromkeys(s.name for s in servers))
-        # Filter to the desired audio type, and prefer "all" (which covers
-        # everything) over specific providers.
-        candidates = [s for s in servers if s.type in (wanted, "all")]
+        try:
+            play = await self.provider.miruro_play(anime_id, episode.number)
+        except Exception as exc:  # provider-level failure (blocked / not found)
+            raise NoStreamError(f"miruro play data unavailable: {exc}") from exc
+
+        candidates = self._candidates(play, wanted)
         if not candidates:
-            has_other = any(s.type and s.type != wanted for s in servers)
+            has_other = self._has_other_track(play, [wanted])
             raise NoStreamError(
                 f"No {wanted} available for this episode — "
                 + (
@@ -121,57 +185,41 @@ class StreamResolver:
                 )
             )
 
-        info = ResolverInfo(servers_seen=seen_names)
+        info = ResolverInfo(
+            servers_seen=[f"{c.provider}:{c.server}" for c in candidates]
+        )
         last_error: Exception | None = None
 
-        for entry in candidates:
-            hash_str = entry.hash or ""
-            # hash has format: "{anilistId}/{category}/{slug}"
-            # For "all" provider we construct the path from the hash
-            provider = entry.name or "?"
-            parts = hash_str.split("/")
-            if len(parts) >= 2:
-                anilist_id = parts[0]
-                category = parts[1] if len(parts) > 1 else "sub"
-                slug = "/".join(parts[2:]) if len(parts) > 2 else episode.number
-            else:
-                anilist_id = anime_id
-                category = wanted
-                slug = episode.number
-
-            # Build the watch path for the pipe
-            watch_slug = f"{anilist_id}/{category}/{slug}" if provider == "all" else f"{provider}/{anilist_id}/{category}/{slug}"
-            watch_path = f"watch/{watch_slug}"
-
-            info.servers_tried.append(entry.name or "?")
+        for cand in candidates:
+            info.servers_tried.append(f"{cand.provider}:{cand.server}")
             try:
-                variants, subtitles, master_m3u8 = await self._from_pipe(
-                    watch_path, anime_id
-                )
-            except Exception as exc:  # noqa: BLE001 — try the next server/provider
-                info.errors[entry.name or "?"] = str(exc)
+                variants = await self._variant_list(cand)
+            except Exception as exc:  # noqa: BLE001 — try the next server
+                info.errors[f"{cand.provider}:{cand.server}"] = str(exc)
                 last_error = exc
                 continue
 
             if not variants:
-                info.errors[entry.name or "?"] = "no variants"
+                info.errors[f"{cand.provider}:{cand.server}"] = "no variants"
+                last_error = ProviderError("no variants")
                 continue
 
             chosen, pick = pick_quality(variants, quality)
-            info.server_used = entry.name or "?"
+            info.server_used = f"{cand.provider}:{cand.server}"
+
             sources = StreamSources(
                 anime_id=anime_id,
                 anime_title=anime_title or anime_id,
                 episode=episode,
                 mode=wanted,  # type: ignore[arg-type]
-                server=entry.name or "?",
+                server=cand.server,
                 via="miruro",
                 variants=variants,
                 best=variants[0],
-                master_url=_proxy_stream(master_m3u8, "https://www.miruro.tv/") if master_m3u8 else None,
+                master_url=_proxy_stream(cand.url, cand.referer),
                 preferred_url=chosen.url,
                 quality_pick=pick,
-                subtitles=subtitles,
+                subtitles=self._subtitles(play, wanted),
             )
             return _Resolution(sources=sources, info=info)
 
@@ -179,87 +227,134 @@ class StreamResolver:
             raise NoStreamError(f"all providers failed: {last_error}")
         raise NoStreamError("no stream sources found")
 
-    async def _from_pipe(
-        self, watch_path: str, anime_id: str
-    ) -> tuple[list[SourceVariant], list[SubtitleTrack], str]:
-        """Call the Miruro pipe watch endpoint and parse the response."""
-        data = await self.http.pipe(watch_path)
+    # ---------------- play-data mapping ----------------
 
-        # The pipe returns a dict with a "streams" list and optional "subtitles"
-        streams: list[dict] = []
-        if isinstance(data, dict):
-            streams_raw = data.get("streams", [])
-            if isinstance(streams_raw, list):
-                streams = streams_raw
-            elif isinstance(streams_raw, dict):
-                streams = [streams_raw]
+    def _candidates(self, play: dict, wanted: str) -> list[_Candidate]:
+        """Flatten play data into prioritized stream candidates.
 
-        if not streams:
-            raise ProviderError("no streams in pipe response")
+        Preference: the exact audio track first (sub → "sub" then "ssub" and
+        friends; dub → "dub"), kickassanime-style HLS providers before embed
+        fallbacks.
+        """
+        out: list[_Candidate] = []
+        tracks = play.get("tracks") if isinstance(play, dict) else None
+        if not isinstance(tracks, list):
+            return out
 
-        variants: list[SourceVariant] = []
-        master_m3u8: str | None = None
+        wants = [wanted]
+        if wanted == "sub":  # ssub = "soft sub" variant many providers use
+            wants.append("ssub")
+            wants.append("raw")
+        elif wanted == "dub":
+            wants.append("dsub")
 
-        for stream in streams:
-            url = stream.get("url") or stream.get("proxiedUrl") or stream.get("file", "")
-            if not url:
+        for track in tracks:
+            if not isinstance(track, dict):
                 continue
-            quality = stream.get("quality", "auto")
-            fmt = stream.get("format", "hls")
-            if fmt != "hls" and not url.endswith(".m3u8"):
-                # Non-HLS — skip (we proxy HLS only)
+            track_name = str(track.get("track") or "").lower()
+            if track_name not in wants:
                 continue
+            for provider in track.get("providers") or []:
+                if not isinstance(provider, dict):
+                    continue
+                provider_name = str(provider.get("provider") or "?")
+                for server in provider.get("servers") or []:
+                    if not isinstance(server, dict):
+                        continue
+                    server_name = str(server.get("server") or "?")
+                    headers = server.get("headers") or {}
+                    referer = ""
+                    if isinstance(headers, dict):
+                        referer = str(headers.get("Referer") or headers.get("referer") or "")
+                    for stream in server.get("streams") or []:
+                        if not isinstance(stream, dict):
+                            continue
+                        url = stream.get("url") or ""
+                        if not url or ".m3u8" not in url:
+                            continue
+                        out.append(
+                            _Candidate(
+                                provider=provider_name,
+                                server=server_name,
+                                url=url,
+                                referer=referer or MIRURO_REFERER,
+                                track=track_name,
+                            )
+                        )
+        return out
 
-            # Track the best stream as the master
-            if master_m3u8 is None:
-                master_m3u8 = url
+    def _has_other_track(self, play: dict, exclude: list[str]) -> bool:
+        tracks = play.get("tracks") if isinstance(play, dict) else None
+        if not isinstance(tracks, list):
+            return False
+        for track in tracks:
+            if isinstance(track, dict):
+                name = str(track.get("track") or "").lower()
+                if name and name not in exclude:
+                    return True
+        return False
 
-            height = stream.get("resolution", {})
-            if isinstance(height, dict):
-                h = height.get("height", 0) or 0
-            else:
-                h = parse_height(str(quality))
+    def _subtitles(self, play: dict, wanted: str) -> list[SubtitleTrack]:
+        """Collect subtitle tracks from all providers of the wanted track."""
+        subs: list[SubtitleTrack] = []
+        tracks = play.get("tracks") if isinstance(play, dict) else None
+        if not isinstance(tracks, list):
+            return subs
+        for track in tracks:
+            if not isinstance(track, dict):
+                continue
+            name = str(track.get("track") or "").lower()
+            if wanted == "sub" and name not in ("sub", "ssub"):
+                if name and name not in ("", "raw"):
+                    continue
+            elif wanted == "dub" and name != "dub":
+                continue
+            for provider in track.get("providers") or []:
+                if not isinstance(provider, dict):
+                    continue
+                # subtitle files usually ship from the same CDN family as
+                # the provider's streams — reuse that server's Referer
+                referer = MIRURO_REFERER
+                for server in provider.get("servers") or []:
+                    if isinstance(server, dict) and isinstance(server.get("headers"), dict):
+                        got = str(
+                            server["headers"].get("Referer")
+                            or server["headers"].get("referer")
+                            or ""
+                        )
+                        if got:
+                            referer = got
+                            break
+                for s in provider.get("subtitles") or []:
+                    if not isinstance(s, dict):
+                        continue
+                    src = s.get("file") or s.get("url") or ""
+                    if not src:
+                        continue
+                    lang = str(s.get("language") or s.get("lang") or "en")
+                    label = str(s.get("label") or lang)
+                    subs.append(
+                        SubtitleTrack(
+                            src=_proxy_stream(str(src), referer),
+                            lang=lang,
+                            label=label,
+                            default=not subs and bool(s.get("default")),
+                        )
+                    )
+        return subs
 
-            variants.append(
-                SourceVariant(
-                    quality=str(quality),
-                    height=int(h) if h else None,
-                    url=_proxy_stream(url, "https://www.miruro.tv/"),
-                    raw_url=url,
-                )
-            )
-
-        if not variants and master_m3u8:
-            # Single variant — treat the master itself as the variant
+    async def _variant_list(self, cand: _Candidate) -> list[SourceVariant]:
+        """Fetch the master playlist and enumerate its quality variants."""
+        body = await self.http.text(cand.url, referer=cand.referer, use_cache=False)
+        variants = parse_master_playlist(body, cand.url, cand.referer)
+        if not variants:
+            # master that directly serves media (single-rendition HLS)
             variants = [
                 SourceVariant(
                     quality="auto",
                     height=0,
-                    url=_proxy_stream(master_m3u8, "https://www.miruro.tv/"),
-                    raw_url=master_m3u8,
+                    url=_proxy_stream(cand.url, cand.referer),
+                    raw_url=cand.url,
                 )
             ]
-
-        # Sort best first
-        variants.sort(key=lambda v: v.height or 0, reverse=True)
-
-        # Subtitle tracks
-        subtitles: list[SubtitleTrack] = []
-        subs_raw = data.get("subtitles", []) if isinstance(data, dict) else []
-        if isinstance(subs_raw, list):
-            for s in subs_raw:
-                if not isinstance(s, dict):
-                    continue
-                src = s.get("file") or s.get("src", "")
-                lang = s.get("lang") or s.get("label") or "en"
-                if src:
-                    subtitles.append(
-                        SubtitleTrack(
-                            src=_proxy_stream(src, "https://www.miruro.tv/"),
-                            lang=lang,
-                            label=str(s.get("label", lang)).upper(),
-                            default=not subtitles,
-                        )
-                    )
-
-        return variants, subtitles, master_m3u8 or ""
+        return variants

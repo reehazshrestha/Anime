@@ -22,6 +22,11 @@ from typing import Any
 import httpx
 from curl_cffi.requests import AsyncSession
 
+
+# Miruro obfuscation key: catalog API responses are gzip-compressed JSON,
+# XOR-encoded with this repeating key ("application/octet-stream").
+MIRURO_OBF_KEY = b"miruro/catalog"
+
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -29,6 +34,7 @@ USER_AGENT = (
 
 MIRURO_BASE = "https://www.miruro.tv"
 MIRURO_PIPE_URL = f"{MIRURO_BASE}/api/secure/pipe"
+MIRURO_API_BASE = f"{MIRURO_BASE}/api/v1"
 ANILIST_API = "https://graphql.anilist.co"
 
 MIRURO_HEADERS = {
@@ -277,3 +283,55 @@ class Http:
                 f"pipe returned {resp.status_code}"
             )
         return _decode_pipe_response(resp.text.strip())
+
+    async def miruro_api(
+        self,
+        path: str,
+        query: dict | None = None,
+        *,
+        use_cache: bool = True,
+    ) -> Any:
+        """Call the Miruro catalog API (``/api/v1/...``) and decode the body.
+
+        Miruro's catalog endpoints return ``application/octet-stream``: the
+        JSON body is gzip-compressed and then XOR-encoded with the repeating
+        key ``"miruro/catalog"``. Some responses skip the gzip step, so the
+        decoder falls back to plain-JSON when gzip fails.
+        """
+        import urllib.parse
+
+        qs = ""
+        if query:
+            clean = {k: v for k, v in query.items() if v is not None}
+            if clean:
+                qs = "?" + urllib.parse.urlencode(clean)
+        url = f"{MIRURO_API_BASE}/{path.lstrip('/')}{qs}"
+
+        async def fetch() -> Any:
+            session = await self._ensure_cf_session()
+            try:
+                resp = await session.get(url, headers=MIRURO_HEADERS)
+            except Exception as exc:
+                raise PipeError(f"miruro api request failed: {exc}") from exc
+            if resp.status_code == 404:
+                raise NotFoundError(f"miruro has no entry for {url}")
+            if resp.status_code != 200:
+                raise PipeError(
+                    f"miruro api returned {resp.status_code} for {url}"
+                )
+            try:
+                xored = bytes(
+                    b ^ MIRURO_OBF_KEY[i % len(MIRURO_OBF_KEY)]
+                    for i, b in enumerate(resp.content)
+                )
+                try:
+                    return json.loads(gzip.decompress(xored).decode("utf-8"))
+                except (OSError, ValueError):
+                    # not gzipped — the body is plain XOR-encoded JSON
+                    return json.loads(xored.decode("utf-8"))
+            except ValueError as exc:
+                raise PipeError(f"failed to decode miruro api response: {exc}") from exc
+
+        if use_cache:
+            return await self.json_cache.wrap(f"miruro:{url}", fetch)
+        return await fetch()

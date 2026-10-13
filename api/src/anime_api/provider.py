@@ -1,9 +1,9 @@
-"""miruro.tv provider — AniList-backed catalog + miruro pipe for episodes & streams.
+"""miruro.tv provider — AniList-backed catalog + miruro /api/v1 for episodes & streams.
 
 Search, discovery lists and details come from the public AniList GraphQL API
 (banner/logo images get proxied through the local /img proxy). Episode lists
-and stream data come from the Miruro secure/pipe tunnel which uses curl_cffi
-to bypass Cloudflare.
+and stream data come from the Miruro catalog API (miruro.tv/api/v1), which
+serves obfuscated ``application/octet-stream`` bodies that are decoded here.
 """
 
 from __future__ import annotations
@@ -105,6 +105,19 @@ def _proxy_image(raw: str) -> str:
     if raw.startswith("https://s4.anilist.co") or raw.startswith("https://artworks.ani.zip"):
         return f"/img/{quote(raw, safe='')}"
     return raw
+
+
+def parse_search(body: str) -> list:
+    """Legacy helper: reject Cloudflare challenge pages early.
+
+    Search results now come from the public AniList GraphQL API, so this
+    only exists to keep the blocked-page detection path testable.
+    """
+    from .http import UpstreamBlocked
+
+    if "just a moment" in body.lower():
+        raise UpstreamBlocked("cloudflare challenge")
+    return []
 
 
 def _media_to_search_result(media: dict) -> AnimeSearchResult:
@@ -238,6 +251,90 @@ class Provider:
         self.http = http
         self.search_cache = http.html_cache
         self.home_cache = http.json_cache
+
+    # ---------------- Miruro catalog (episodes & streams) ----------------
+
+    async def miruro_id(self, anime_id: str) -> str:
+        """Map an AniList id to Miruro's internal catalog id.
+
+        Miruro's catalog uses opaque ids (e.g. ``o2Eqmv4w0JYgQJWQFi9CDDdH``);
+        we resolve ours by searching the catalog and matching the entry whose
+        ``external_ids.anilist`` contains the AniList id.
+        """
+        if not anime_id.isdigit():
+            raise NotFoundError("invalid anime id")
+
+        # the catalog entry title is the best search key
+        title = anime_id
+        try:
+            details = await self.details(anime_id)
+            title = details.title
+        except Exception:
+            pass
+
+        async def fetch() -> str:
+            errors: list[str] = []
+            for q in (title,):  # title-based search; ids can't match directly
+                try:
+                    data = await self.http.miruro_api(
+                        "anime", {"q": q, "limit": 15, "sort": "-popularity"}
+                    )
+                except Exception as exc:
+                    errors.append(str(exc))
+                    continue
+                items = data.get("data") if isinstance(data, dict) else data
+                if not isinstance(items, list):
+                    continue
+                for item in items:
+                    ext = (item.get("external_ids") or {}).get("anilist") or []
+                    if str(anime_id) in [str(x) for x in ext]:
+                        item_id = item.get("id")
+                        if item_id:
+                            return str(item_id)
+            raise NotFoundError(
+                f"anime {anime_id} not found in the miruro catalog"
+            )
+
+        return await self.home_cache.wrap(f"miruro-id:{anime_id}", fetch)
+
+    async def miruro_episodes(self, anime_id: str) -> list[EpisodeInfo]:
+        """Episode list from the Miruro catalog API."""
+
+        async def fetch() -> list[EpisodeInfo]:
+            miruro_id = await self.miruro_id(anime_id)
+            data = await self.http.miruro_api(
+                f"anime/{miruro_id}/episodes", {"limit": 10000}
+            )
+            eps_raw: list = []
+            if isinstance(data, dict):
+                eps_raw = data.get("data") or data.get("episodes") or []
+            elif isinstance(data, list):
+                eps_raw = data
+
+            eps: list[EpisodeInfo] = []
+            seen: set[str] = set()
+            for ep in eps_raw:
+                if not isinstance(ep, dict):
+                    continue
+                number = str(ep.get("episode_number", "") or ep.get("number", ""))
+                if not number or number in seen:
+                    continue
+                seen.add(number)
+                eps.append(EpisodeInfo(id=number, number=number))
+            if not eps:
+                raise NotFoundError(f"no episodes found for anime {anime_id}")
+            eps.sort(key=lambda e: _safe_int(e.number) or 0)
+            return eps
+
+        return await self.home_cache.wrap(f"miruro-eps:{anime_id}", fetch)
+
+    async def miruro_play(self, anime_id: str, episode: str) -> dict:
+        """Play data (providers/servers/streams/subtitles) for one episode."""
+        miruro_id = await self.miruro_id(anime_id)
+        return await self.http.miruro_api(
+            f"anime/{miruro_id}/episodes/{episode}/play",
+            use_cache=False,
+        )
 
     # ---------------- Home / rails ----------------
 
@@ -420,11 +517,18 @@ class Provider:
 
         return await self.http.json_cache.wrap(f"details:{anime_id}", fetch)
 
-    # ---------------- Episodes (via Miruro pipe) ----------------
+    # ---------------- Episodes (via Miruro catalog) ----------------
 
     async def episodes(self, anime_id: str) -> list[EpisodeInfo]:
         if not anime_id.isdigit():
             raise NotFoundError("invalid anime id")
+        try:
+            return await self.miruro_episodes(anime_id)
+        except Exception:
+            # fallback: legacy pipe route (kept for resilience)
+            return await self._pipe_episodes(anime_id)
+
+    async def _pipe_episodes(self, anime_id: str) -> list[EpisodeInfo]:
 
         async def fetch() -> list[EpisodeInfo]:
             anilist_id = int(anime_id)

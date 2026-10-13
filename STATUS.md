@@ -22,7 +22,7 @@ One command runs everything: `cd anime-api && uv run anime-api` → **http://loc
 | Catalog: home rails, search, details, episodes | ✅ Working | AniList GraphQL API (public) for catalog; miruro.tv pipe for episodes + streams; TTL-cached |
 | Genre browsing | ✅ Working | `/api/genre/{genre}?page=N` via provider `/filter` endpoint; verified 12 consecutive page hits: 12× 200 |
 | Search suggestions | ✅ Working | Debounced client → `/api/search`, cached server-side |
-| **Multi-server stream resolution** | ✅ Working | ZokoAnime → HD-1 → Vidstream, first playable wins, per-server error trace |
+| **Multi-server stream resolution** | ✅ Working | miruro.tv catalog (kickassanime, anikoto, …): providers → servers → HLS, first playable wins, per-server error trace |
 | **Quality enumeration + pinning** | ✅ Working | 360p–1080p parsed from master playlist; `?quality=1080` pins, `?quality=480` falls back with `strategy: "fallback"` |
 | Sub + dub modes | ✅ Working | `?mode=dub` resolves a dub server when the anime has one |
 | **HLS proxy** | ✅ Working | Playlists rewritten in-flight, segments/subtitles piped with Range (seek) support, Referer propagation |
@@ -228,7 +228,7 @@ in VLC (Media → Open Network Stream), or just press play on the watch page.
 - **Discover year/season/status filters** are UI-only — the provider's filter
   endpoint exposes genre + page reliably; the others aren't wired.
 - **Sort** beyond A–Z relies on provider ordering.
-- **Provider dependency**: catalog comes from AniList's public GraphQL API; episodes/streams come from the miruro.tv secure/pipe tunnel. The pipe endpoint sits behind Cloudflare and is reached via a curl_cffi Chrome-TLS impersonation session; catalog parsing is stable because it's API-backed, not HTML scraping.
+- **Provider dependency**: catalog comes from AniList's public GraphQL API; episodes/streams come from the miruro.tv catalog API (`/api/v1`), whose obfuscated (`application/octet-stream`, ?XOR-"miruro/catalog"-encoded) responses are decoded server-side via a curl_cffi Chrome-TLS impersonation session. AniList ids are mapped to miruro ids by catalog search + `external_ids.anilist` match.
 - **Single-user** user-data store (JSON file, no auth). Fine for local/personal
   use; not multi-tenant.
 - **Latest-verified date matters**: parsers rot when the provider changes.

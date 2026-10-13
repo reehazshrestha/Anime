@@ -72,10 +72,9 @@ async def proxy_stream(
         return JSONResponse({"error": "invalid stream path"}, status_code=400)
 
     referer = referer_for(target, ref)
-    is_playlist = ".m3u8" in target.split("?", 1)[0]
-    is_vtt = ".vtt" in target.split("?", 1)[0]
+    named_playlist = ".m3u8" in target.split("?", 1)[0]
 
-    if is_playlist:
+    if named_playlist:
         try:
             body = await http.text(target, referer=referer, use_cache=False)
         except Exception as exc:
@@ -124,6 +123,67 @@ async def proxy_stream(
         except httpx.HTTPError as exc:
             last_error = exc
             continue
+
+        # Some HLS playlists are served WITHOUT an .m3u8 extension
+        # (e.g. miruro's echovideo.to '/cdn/<hash>' urls) and can carry no
+        # Range header — sniff the first chunk: a playlist gets buffered,
+        # rewritten and returned; media/segments keep streaming unchanged.
+        ctype = (upstream.headers.get("content-type") or "").lower()
+        if not range_header and not named_playlist:
+            first: bytes = b""
+            it = upstream.aiter_bytes(CHUNK)
+            try:
+                first = await anext(it)
+            except (StopAsyncIteration, httpx.HTTPError):
+                first = b""
+            if first.lstrip().startswith(b"#EXTM3U") or "mpegurl" in ctype:
+                rest = bytearray()
+                try:
+                    async for chunk in it:
+                        rest.extend(chunk)
+                        if len(rest) > 2 * 1024 * 1024:
+                            break
+                finally:
+                    await upstream.aclose()
+                return Response(
+                    content=rewrite_m3u8(
+                        (first + bytes(rest)).decode("utf-8", "replace"),
+                        target,
+                        referer,
+                    ),
+                    media_type="application/vnd.apple.mpegurl",
+                    headers={"Cache-Control": "no-store"},
+                )
+
+            # wrap the iterator so the buffered first chunk leads the stream
+            async def sniffer():
+                if first:
+                    yield first
+                try:
+                    async for chunk in it:
+                        yield chunk
+                finally:
+                    await upstream.aclose()
+
+            resp_headers = {
+                k: v
+                for k, v in upstream.headers.items()
+                if k.lower()
+                in (
+                    "content-type",
+                    "content-length",
+                    "content-range",
+                    "accept-ranges",
+                    "etag",
+                    "last-modified",
+                )
+            }
+            return StreamingResponse(
+                sniffer(),
+                status_code=upstream.status_code,
+                headers=resp_headers,
+                media_type=upstream.headers.get("content-type") or "application/octet-stream",
+            )
 
         # stream it through
         resp_headers = {

@@ -6,6 +6,7 @@ import { AnimeCard } from "./AnimeCard.js";
 import { Rail } from "./Rail.js";
 import { ContinueWatchingHero } from "./ContinueWatchingHero.js";
 import { RailSkeleton } from "./ui/primitives.js";
+import { useProgressPosterBackfill } from "../hooks/usePosterBackfill.js";
 import { navigate } from "../router.js";
 import type { FavoriteEntry, HomeSection, ProgressEntry } from "../../shared/types.js";
 
@@ -49,6 +50,9 @@ export function Home() {
       alive = false;
     };
   }, []);
+
+  // older progress entries may lack cover art — backfill lazily
+  useProgressPosterBackfill(progress, () => setProgress(listProgress()));
 
   if (loading) {
     return (
@@ -99,6 +103,7 @@ export function Home() {
                 key={p.animeId}
                 id={p.animeId}
                 title={p.animeTitle}
+                poster={p.poster}
                 sub={`Ep ${p.episodeNumber} · ${p.mode.toUpperCase()}`}
                 progressPct={
                   p.durationSeconds > 0 ? (p.positionSeconds / p.durationSeconds) * 100 : 0

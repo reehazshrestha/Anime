@@ -11,6 +11,7 @@ import { navigate } from "../router.js";
 import { useTheme } from "../theme.js";
 import { AnimeCard } from "./AnimeCard.js";
 import { CardSkeletons, EmptyState } from "./ui/primitives.js";
+import { useProgressPosterBackfill } from "../hooks/usePosterBackfill.js";
 import type { FavoriteEntry, ProgressEntry } from "../../shared/types.js";
 
 /**
@@ -158,9 +159,13 @@ export function Library() {
 export function Continue() {
   const [items, setItems] = useState<ProgressEntry[] | null>(null);
 
+  const refresh = () => setItems(listProgress().filter(inProgress));
+
   useEffect(() => {
     setItems(listProgress().filter(inProgress));
   }, []);
+
+  useProgressPosterBackfill(items ?? [], refresh);
 
   return (
     <div className="page">
@@ -203,9 +208,13 @@ function inProgress(p: ProgressEntry): boolean {
 export function History() {
   const [items, setItems] = useState<ProgressEntry[] | null>(null);
 
+  const refresh = () => setItems(listProgress());
+
   useEffect(() => {
     setItems(listProgress());
   }, []);
+
+  useProgressPosterBackfill(items ?? [], refresh);
 
   return (
     <div className="page">

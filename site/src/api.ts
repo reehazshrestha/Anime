@@ -41,6 +41,8 @@ function initialApiBase(): string {
 }
 
 export const API_BASE = initialApiBase();
+// cache keys are prefixed with API_BASE, so a backend switch (reload) sees
+// a fresh namespace
 
 export function getApiBase(): string {
   return API_BASE;
@@ -95,7 +97,49 @@ function absolutize(value: unknown): unknown {
   return value;
 }
 
+// ---------------------------------------------------------------------
+// client cache — small TTL memo for GETs so revisit/back-forward/season
+// switching doesn't refetch the same provider data (lower latency + fewer
+// upstream calls). Also dedupes concurrent identical requests.
+// ---------------------------------------------------------------------
+const MAX_CACHE_TTL_MS = 10 * 60 * 1000;
+const memo = new Map<string, { expires: number; promise: Promise<unknown> }>();
+
+function cacheTtl(url: string): number {
+  const path = url.split("?", 1)[0];
+  if (path.startsWith("/api/home")) return 10 * 60 * 1000;
+  if (path.startsWith("/api/genre")) return 10 * 60 * 1000;
+  if (path.startsWith("/api/search")) return 5 * 60 * 1000;
+  if (path.startsWith("/api/anime") && path.endsWith("/episodes")) return MAX_CACHE_TTL_MS;
+  if (path.startsWith("/api/anime")) return 5 * 60 * 1000;
+  if (path.startsWith("/api/sources")) return 30 * 1000;
+  return 0;
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const readonly = !init || init.method === undefined || init.method === "GET";
+  const ttl = readonly ? cacheTtl(url) : 0;
+  const full = API_BASE + url;
+  let hit: { expires: number; promise: Promise<unknown> } | undefined;
+  if (ttl > 0) {
+    hit = memo.get(full);
+    if (hit && hit.expires < Date.now()) {
+      memo.delete(full);
+      hit = undefined;
+    }
+    if (hit) return hit.promise as Promise<T>;
+  }
+  const p = doRequest<T>(url, init);
+  if (ttl > 0) {
+    // hard cap so long sessions don't leak
+    if (memo.size > 200) memo.clear();
+    memo.set(full, { expires: Date.now() + ttl, promise: p });
+    p.catch(() => memo.delete(full)); // don't pin failed requests
+  }
+  return p;
+}
+
+async function doRequest<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(API_BASE + url, init);
   let body: unknown = null;
   try {

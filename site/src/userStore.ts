@@ -63,6 +63,8 @@ export function saveProgress(entry: {
   positionSeconds: number;
   durationSeconds: number;
   mode: AudioMode;
+  /** cover art for library/continue cards (merged on first save) */
+  poster?: string;
 }): void {
   const data = load();
   const existing = data.progress[entry.animeId];
@@ -80,11 +82,21 @@ export function saveProgress(entry: {
     updatedAt: nowMs(),
     mode: entry.mode === "dub" ? "dub" : "sub",
     watchedEpisodes: [...watched].sort((a, b) => (Number(a) || 0) - (Number(b) || 0)),
-    // keep the saved poster if we have one
-    poster: existing?.poster,
+    // prefer the freshly provided poster, then keep any saved one
+    poster: entry.poster ?? existing?.poster,
   };
   data.progress[entry.animeId] = next;
   save(data);
+}
+
+/** Backfill cover art on an existing progress entry (once). */
+export function savePosterIfMissing(animeId: string, poster: string): boolean {
+  const data = load();
+  const entry = data.progress[animeId];
+  if (!entry || entry.poster) return false;
+  entry.poster = poster;
+  save(data);
+  return true;
 }
 
 export function deleteProgress(animeId: string): void {

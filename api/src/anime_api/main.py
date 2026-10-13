@@ -135,6 +135,18 @@ def error_response(status: int, message: str) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status)
 
 
+def cached_json(content: dict, seconds: int, stale: int = 86_400) -> JSONResponse:
+    """catalog JSON with cache headers — browser + edge cache repeat calls,
+    dropping provider round-trips on revisit and reducing perceived latency.
+    """
+    return JSONResponse(
+        content,
+        headers={
+            "Cache-Control": f"public, max-age={seconds}, stale-while-revalidate={stale}",
+        },
+    )
+
+
 def map_exception(exc: Exception) -> JSONResponse:
     if isinstance(exc, NotFoundError):
         return error_response(404, str(exc))
@@ -173,7 +185,7 @@ async def home(request: Request):
         sections = await provider.home()
     except Exception as exc:
         return map_exception(exc)
-    return {"sections": [s.model_dump() for s in sections]}
+    return cached_json({"sections": [s.model_dump() for s in sections]}, 600)
 
 
 @app.get("/api/search")
@@ -183,7 +195,7 @@ async def search(request: Request, q: str = Query(..., min_length=1)):
         results = await provider.search(q)
     except Exception as exc:
         return map_exception(exc)
-    return {"results": [r.model_dump() for r in results]}
+    return cached_json({"results": [r.model_dump() for r in results]}, 300)
 
 
 @app.get("/api/genre/{genre}")
@@ -197,11 +209,14 @@ async def genre_browse(
         results = await provider.browse_genre(genre, page)
     except Exception as exc:
         return map_exception(exc)
-    return {
-        "genre": genre,
-        "page": page,
-        "results": [r.model_dump() for r in results],
-    }
+    return cached_json(
+        {
+            "genre": genre,
+            "page": page,
+            "results": [r.model_dump() for r in results],
+        },
+        600,
+    )
 
 
 @app.get("/api/anime/{anime_id}")
@@ -218,13 +233,16 @@ async def anime_details(request: Request, anime_id: str):
     # site contract: isFavorite + progress + seasons (franchise entries)
     related = await _related_seasons(provider, anime_id, details.title)
     progress = store.get_progress(anime_id)
-    return {
-        **details.model_dump(exclude={"seasons"}),
-        "seasons": [r.model_dump() for r in related],
-        "episodes": [e.model_dump() for e in episodes],
-        "isFavorite": store.is_favorite(anime_id),
-        "progress": progress.model_dump() if progress else None,
-    }
+    return cached_json(
+        {
+            **details.model_dump(exclude={"seasons"}),
+            "seasons": [r.model_dump() for r in related],
+            "episodes": [e.model_dump() for e in episodes],
+            "isFavorite": store.is_favorite(anime_id),
+            "progress": progress.model_dump() if progress else None,
+        },
+        300,
+    )
 
 
 @app.get("/api/anime/{anime_id}/episodes")
@@ -236,7 +254,7 @@ async def anime_episodes(request: Request, anime_id: str):
         episodes = await provider.episodes(anime_id)
     except Exception as exc:
         return map_exception(exc)
-    return {"episodes": [e.model_dump() for e in episodes]}
+    return cached_json({"episodes": [e.model_dump() for e in episodes]}, 300)
 
 
 # ---------------- streams ----------------
@@ -282,7 +300,11 @@ async def sources(
     except Exception as exc:
         return map_exception(exc)
 
-    return ResolveResponse(**resolution.sources.model_dump(), resolver=resolution.info)
+    return cached_json(
+        ResolveResponse(**resolution.sources.model_dump(), resolver=resolution.info).model_dump(),
+        60,
+        stale=300,
+    )
 
 
 # ---------------- user data ----------------

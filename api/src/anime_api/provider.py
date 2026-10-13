@@ -156,7 +156,7 @@ def _media_to_details(media: dict) -> AnimeDetails:
             poster = _proxy_image(cover[key])
             break
 
-    description = media.get("description") or None
+    description = _clean_description(media.get("description"))
     mal_id = media.get("idMal")
 
     # Build meta
@@ -242,6 +242,26 @@ def _safe_int(val: Any) -> int | None:
         return int(val)
     except (ValueError, TypeError):
         return None
+
+
+def _clean_description(raw: Any) -> str | None:
+    """Sanitize an AniList description: strip markup, decode entities.
+
+    AniList serves descriptions containing stray tags (`<i>`, `<b>`, `<br>`,)
+    even with asHtml:false — clients render them as text, so clean them here:
+    drop tags, decode named entities, and collapse whitespace while keeping
+    paragraph breaks.
+    """
+    if not raw or not isinstance(raw, str):
+        return None
+    import html as html_mod
+
+    text = re.sub(r"<(br|/p)>\s*", "\n", raw, flags=re.I)
+    text = re.sub(r"<[^>]+>", "", text)  # strip remaining tags
+    text = html_mod.unescape(text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{2,}", "\n\n", text).strip()
+    return text or None
 
 
 class Provider:

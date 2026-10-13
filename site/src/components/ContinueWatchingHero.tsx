@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { navigate } from "../router.js";
 import { api } from "../api.js";
-import { deleteProgress } from "../userStore.js";
+import { deleteProgress, savePosterIfMissing } from "../userStore.js";
 import type { ProgressEntry } from "../../shared/types.js";
 
 /**
@@ -20,7 +20,12 @@ export function ContinueWatchingHero({ entry }: { entry: ProgressEntry }) {
     let alive = true;
     api
       .getAnime(entry.animeId)
-      .then((d) => alive && setPoster(d.poster ?? null))
+      .then((d) => {
+        if (!alive) return;
+        setPoster(d.poster ?? null);
+        // persist so cards elsewhere get the art without refetching
+        if (d.poster) savePosterIfMissing(entry.animeId, d.poster);
+      })
       .catch(() => undefined);
     return () => {
       alive = false;

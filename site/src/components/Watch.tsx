@@ -176,6 +176,7 @@ export function Watch({ animeId, epParam }: { animeId: string; epParam: string |
   useEffect(() => {
     if (!sources) return;
     const title = sources.animeTitle;
+    const poster = details?.poster ?? undefined;
     const save = (final = false) => {
       const v = videoRef.current;
       if (!v || !v.duration || Number.isNaN(v.duration)) return;
@@ -186,6 +187,7 @@ export function Watch({ animeId, epParam }: { animeId: string; epParam: string |
         positionSeconds: final ? v.duration : v.currentTime,
         durationSeconds: v.duration,
         mode,
+        poster,
       });
     };
     const interval = setInterval(() => save(), 10_000);
@@ -200,6 +202,7 @@ export function Watch({ animeId, epParam }: { animeId: string; epParam: string |
         positionSeconds: v.currentTime,
         durationSeconds: v.duration,
         mode,
+        poster,
       });
     };
     window.addEventListener("pagehide", onHide);
@@ -209,7 +212,7 @@ export function Watch({ animeId, epParam }: { animeId: string; epParam: string |
       window.removeEventListener("pagehide", onHide);
       videoRef.current?.removeEventListener("ended", onEnded);
     };
-  }, [sources, animeId, ep, mode]);
+  }, [sources, animeId, ep, mode, details?.poster]);
 
   const episodes = details?.episodes ?? [];
   const numbers = useMemo(() => episodes.map((e) => e.number), [episodes]);

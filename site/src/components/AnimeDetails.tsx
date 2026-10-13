@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Play, Plus, Share2 } from "lucide-react";
 import { api, type AnimeDetailsResponse } from "../api.js";
 import { getProgress, isFavorite, addFavorite, removeFavorite } from "../userStore.js";
@@ -8,11 +8,13 @@ import { useEpisodeChunk, EpisodeTabs } from "./EpisodePager.js";
 const EPS_PER_CHUNK = 100;
 
 export function AnimeDetails({ id }: { id: string }) {
-  const [data, setData] = useState<AnimeDetailsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [seasonId, setSeasonId] = useState<string>(id);
   // cache of loaded entries (base anime + each visited season), keyed by id
   const [entryMap, setEntryMap] = useState<Record<string, AnimeDetailsResponse | null>>({});
+  const inflight = useRef<Set<string>>(new Set());
+  // base entry (drives the seasons bar and the initial hero)
+  const data = id in entryMap ? entryMap[id] : null;
   const [favPending, setFavPending] = useState(false);
   const [shared, setShared] = useState(false);
 
@@ -21,6 +23,7 @@ export function AnimeDetails({ id }: { id: string }) {
     setError(null);
     setSeasonId(id);
     setEntryMap({});
+    inflight.current.clear();
     api
       .getAnime(id)
       .then((d) =>
@@ -34,20 +37,26 @@ export function AnimeDetails({ id }: { id: string }) {
   }, [id]);
 
   useEffect(() => {
+    // already cached or already being fetched — nothing to do
     if (!data || seasonId === id || entryMap[seasonId] !== undefined) return;
+    if (inflight.current.has(seasonId)) return;
+    inflight.current.add(seasonId);
     let alive = true;
-    // null = loading (keeps the hero on the previous entry until it lands)
-    setEntryMap((m) => ({ ...m, [seasonId]: null }));
     api
       .getAnime(seasonId)
-      .then((d) =>
-        alive &&
+      .then((d) => {
+        if (!alive) return;
         setEntryMap((m) => ({
           ...m,
           [seasonId]: { ...d, progress: d.progress ?? getProgress(seasonId) },
-        })),
-      )
-      .catch(() => alive && setEntryMap((m) => ({ ...m, [seasonId]: null })));
+        }));
+      })
+      .catch(() => {
+        // failed season falls back to the base entry (null marks attempted)
+        if (!alive) return;
+        setEntryMap((m) => ({ ...m, [seasonId]: null }));
+      })
+      .finally(() => inflight.current.delete(seasonId));
     return () => {
       alive = false;
     };
@@ -108,7 +117,6 @@ export function AnimeDetails({ id }: { id: string }) {
       }
       const updated = { ...entry, isFavorite: !isFavorite(entry.id) };
       setEntryMap((m) => ({ ...m, [activeId]: updated }));
-      if (activeId === id) setData(updated);
     } finally {
       setFavPending(false);
     }

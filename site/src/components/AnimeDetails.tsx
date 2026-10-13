@@ -11,39 +11,49 @@ export function AnimeDetails({ id }: { id: string }) {
   const [data, setData] = useState<AnimeDetailsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [seasonId, setSeasonId] = useState<string>(id);
-  const [seasonEpisodes, setSeasonEpisodes] = useState<AnimeDetailsResponse | null>(null);
+  // cache of loaded entries (base anime + each visited season), keyed by id
+  const [entryMap, setEntryMap] = useState<Record<string, AnimeDetailsResponse | null>>({});
   const [favPending, setFavPending] = useState(false);
   const [shared, setShared] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    setData(null);
     setError(null);
     setSeasonId(id);
-    setSeasonEpisodes(null);
+    setEntryMap({});
     api
       .getAnime(id)
-      .then((d) => alive && setData({ ...d, progress: getProgress(id) }))
+      .then((d) =>
+        alive &&
+        setEntryMap((m) => ({ ...m, [id]: { ...d, progress: getProgress(id) } })),
+      )
       .catch((e: Error) => alive && setError(e.message));
     return () => {
       alive = false;
     };
   }, [id]);
 
-  // when the selected season differs from the main entry, load its details+episodes
   useEffect(() => {
-    if (!data || seasonId === id) return;
+    if (!data || seasonId === id || entryMap[seasonId] !== undefined) return;
     let alive = true;
+    // null = loading (keeps the hero on the previous entry until it lands)
+    setEntryMap((m) => ({ ...m, [seasonId]: null }));
     api
       .getAnime(seasonId)
-      .then((d) => alive && setSeasonEpisodes(d))
-      .catch(() => alive && setSeasonEpisodes(null));
+      .then((d) =>
+        alive &&
+        setEntryMap((m) => ({
+          ...m,
+          [seasonId]: { ...d, progress: d.progress ?? getProgress(seasonId) },
+        })),
+      )
+      .catch(() => alive && setEntryMap((m) => ({ ...m, [seasonId]: null })));
     return () => {
       alive = false;
     };
-  }, [seasonId, id, data]);
+  }, [seasonId, id, data, entryMap]);
 
-  const active = seasonId === id ? data : seasonEpisodes;
+  const active = seasonId === id ? data : entryMap[seasonId] ?? data;
   const activeId = seasonId === id ? id : seasonId;
   const episodes = active?.episodes ?? [];
   const numbers = useMemo(() => episodes.map((e) => e.number), [episodes]);
@@ -77,34 +87,38 @@ export function AnimeDetails({ id }: { id: string }) {
     );
   }
 
-  const watched = new Set(active?.progress?.watchedEpisodes ?? []);
-  const poster = data.poster;
+  // non-null from here: falls back to the base entry while a season loads
+  const entry = active ?? data;
 
+  const watched = new Set(entry?.progress?.watchedEpisodes ?? []);
+  const poster = entry?.poster;
   const visible = episodes.slice(chunk * EPS_PER_CHUNK, (chunk + 1) * EPS_PER_CHUNK);
   const rangeLabel = episodes.length
     ? `Ep ${visible[0]?.number}–${visible[visible.length - 1]?.number} of ${episodes.length}`
     : "";
 
   async function toggleFavorite() {
-    if (!data || favPending) return;
+    if (!entry || favPending) return;
     setFavPending(true);
     try {
-      if (isFavorite(data.id)) {
-        removeFavorite(data.id);
+      if (isFavorite(entry.id)) {
+        removeFavorite(entry.id);
       } else {
-        addFavorite(data.id, data.title, data.poster ?? undefined);
+        addFavorite(entry.id, entry.title, entry.poster ?? undefined);
       }
-      setData({ ...data, isFavorite: !isFavorite(data.id) });
+      const updated = { ...entry, isFavorite: !isFavorite(entry.id) };
+      setEntryMap((m) => ({ ...m, [activeId]: updated }));
+      if (activeId === id) setData(updated);
     } finally {
       setFavPending(false);
     }
   }
 
   const share = async () => {
-    const url = `${location.origin}${location.pathname}#/anime/${encodeURIComponent(data.id)}`;
+    const url = `${location.origin}${location.pathname}#/anime/${encodeURIComponent(entry.id)}`;
     try {
       if (navigator.share) {
-        await navigator.share({ title: data.title, url });
+        await navigator.share({ title: entry.title, url });
       } else {
         await navigator.clipboard.writeText(url);
         setShared(true);
@@ -122,35 +136,35 @@ export function AnimeDetails({ id }: { id: string }) {
         <div className="detail-inner">
           <div className="detail-poster">
             {poster ? (
-              <img src={poster} alt={data.title} />
+              <img src={poster} alt={entry.title} />
             ) : (
-              <div className="detail-poster-fallback">{data.title.slice(0, 1).toUpperCase()}</div>
+              <div className="detail-poster-fallback">{entry.title.slice(0, 1).toUpperCase()}</div>
             )}
           </div>
           <div className="detail-info">
-            <h1>{data.title}</h1>
-            {data.meta?.japanese && <p className="detail-jp">{data.meta.japanese}</p>}
+            <h1>{entry.title}</h1>
+            {entry.meta?.japanese && <p className="detail-jp">{entry.meta.japanese}</p>}
             <div className="chip-row">
-              {data.meta?.status && <span className="chip">{data.meta.status}</span>}
-              {data.meta?.duration && <span className="chip">{data.meta.duration}</span>}
-              {data.meta?.aired && <span className="chip">{data.meta.aired}</span>}
-              {data.meta?.malScore && <span className="chip score">★ {data.meta.malScore}</span>}
+              {entry.meta?.status && <span className="chip">{entry.meta.status}</span>}
+              {entry.meta?.duration && <span className="chip">{entry.meta.duration}</span>}
+              {entry.meta?.aired && <span className="chip">{entry.meta.aired}</span>}
+              {entry.meta?.malScore && <span className="chip score">★ {entry.meta.malScore}</span>}
             </div>
-            {data.meta?.genres.length ? (
+            {entry.meta?.genres.length ? (
               <div className="genre-row">
-                {data.meta.genres.map((g) => (
+                {entry.meta.genres.map((g) => (
                   <span key={g} className="genre-pill">
                     {g}
                   </span>
                 ))}
               </div>
             ) : null}
-            {data.description ? <p className="detail-desc">{data.description}</p> : null}
-            {(data.meta?.studios || data.meta?.producers) && (
+            {entry.description ? <p className="detail-desc">{entry.description}</p> : null}
+            {(entry.meta?.studios || entry.meta?.producers) && (
               <p className="detail-studios">
                 {[
-                  data.meta?.studios ? `Studio: ${data.meta.studios}` : null,
-                  data.meta?.producers ? `Producer: ${data.meta.producers}` : null,
+                  entry.meta?.studios ? `Studio: ${entry.meta.studios}` : null,
+                  entry.meta?.producers ? `Producer: ${entry.meta.producers}` : null,
                 ]
                   .filter(Boolean)
                   .join(" · ")}
@@ -172,8 +186,8 @@ export function AnimeDetails({ id }: { id: string }) {
                 {resumeEp ? `Resume Ep ${resumeEp}` : "Watch Now"}
               </button>
               <button className="btn btn-hero" onClick={toggleFavorite} disabled={favPending}>
-                {data.isFavorite ? <Check size={17} /> : <Plus size={17} />}
-                {data.isFavorite ? "In My List" : "Add to List"}
+                {entry.isFavorite ? <Check size={17} /> : <Plus size={17} />}
+                {entry.isFavorite ? "In My List" : "Add to List"}
               </button>
               <button className="btn btn-hero" onClick={share}>
                 <Share2 size={16} />
@@ -188,10 +202,16 @@ export function AnimeDetails({ id }: { id: string }) {
         <div className="section">
           <div className="section-head">
             <h2>Seasons & related</h2>
+            {seasonId !== id && entry && (
+              <span className="muted" style={{ fontSize: 13, fontWeight: 400 }}>
+                Now viewing: {entry.title}
+              </span>
+            )}
           </div>
           <div className="season-chips">
             <button
               className={`season-chip${seasonId === id ? " active" : ""}`}
+              aria-current={seasonId === id || undefined}
               onClick={() => setSeasonId(id)}
             >
               {data.title}
@@ -200,6 +220,7 @@ export function AnimeDetails({ id }: { id: string }) {
               <button
                 key={s.id}
                 className={`season-chip${seasonId === s.id ? " active" : ""}`}
+                aria-current={seasonId === s.id || undefined}
                 onClick={() => setSeasonId(s.id)}
               >
                 {s.title}

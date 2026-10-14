@@ -18,3 +18,7 @@ data/
 .vercel/
 .env
 *.log
+.env*
+# exception: production env is public (VITE_* values are inlined into the
+# JS bundle anyway) and the deployed site needs the API base baked in
+!site/.env.production

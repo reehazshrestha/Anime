@@ -15,6 +15,7 @@ import asyncio
 import base64
 import gzip
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -36,6 +37,15 @@ MIRURO_BASE = "https://www.miruro.tv"
 MIRURO_PIPE_URL = f"{MIRURO_BASE}/api/secure/pipe"
 MIRURO_API_BASE = f"{MIRURO_BASE}/api/v1"
 ANILIST_API = "https://graphql.anilist.co"
+
+# Optional passthrough for Miruro traffic (episodes, streams). Miruro sits
+# behind Cloudflare, which blocks every datacenter IP range (Vercel, fly.io
+# and this repo's CI egress all got 403s no matter which browser fingerprint
+# we impersonate). Only residential/ISP-proxy egress gets through. Set this
+# to a standard proxy URL (http(s)://user:pass@host:port) in the serverless
+# environment and every curl_cffi call below tunnels through it; unset it
+# locally and requests go direct as before. AniList traffic is never proxied.
+MIRURO_PROXY_URL: str | None = os.environ.get("MIRURO_PROXY_URL", "").strip() or None
 
 MIRURO_HEADERS = {
     "User-Agent": USER_AGENT,
@@ -160,7 +170,11 @@ class Http:
 
     async def _ensure_cf_session(self) -> AsyncSession:
         if self._cf_session is None:
-            self._cf_session = AsyncSession(impersonate="chrome124")
+            # MIRURO_PROXY_URL routes the Cloudflare-facing session through a
+            # residential proxy (see note above MIRURO_PROXY_URL).
+            self._cf_session = AsyncSession(
+                impersonate="chrome124", proxy=MIRURO_PROXY_URL
+            )
         return self._cf_session
 
     async def aclose(self) -> None:
@@ -278,6 +292,9 @@ class Http:
         except Exception as exc:
             raise PipeError(f"pipe request failed: {exc}") from exc
 
+        if resp.status_code == 403:
+            # Cloudflare edge block — see MIRURO_PROXY_URL note above.
+            raise UpstreamBlocked("pipe returned 403")
         if resp.status_code != 200:
             raise PipeError(
                 f"pipe returned {resp.status_code}"
@@ -315,6 +332,9 @@ class Http:
                 raise PipeError(f"miruro api request failed: {exc}") from exc
             if resp.status_code == 404:
                 raise NotFoundError(f"miruro has no entry for {url}")
+            if resp.status_code == 403:
+                # Cloudflare edge block — see MIRURO_PROXY_URL note above.
+                raise UpstreamBlocked(f"miruro api returned 403 for {url}")
             if resp.status_code != 200:
                 raise PipeError(
                     f"miruro api returned {resp.status_code} for {url}"
